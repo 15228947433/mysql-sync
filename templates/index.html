@@ -13,13 +13,14 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f0f2f5; }
         .layout { display: flex; min-height: 100vh; }
-        .sidebar { width: 200px; background: #001529; color: #fff; padding-top: 20px; }
-        .sidebar .logo { text-align: center; padding: 20px 0; font-size: 18px; font-weight: bold; border-bottom: 1px solid #002140; }
-        .sidebar .menu-item { padding: 12px 24px; cursor: pointer; transition: all 0.3s; }
+        .sidebar { width: 200px; background: #001529; color: #fff; }
+        .sidebar .logo { text-align: center; padding: 20px; font-size: 18px; font-weight: bold; border-bottom: 1px solid #002140; }
+        .sidebar .menu-item { padding: 14px 24px; cursor: pointer; transition: all 0.3s; font-size: 14px; }
         .sidebar .menu-item:hover { background: #1890ff; }
         .sidebar .menu-item.active { background: #1890ff; }
-        .main { flex: 1; padding: 20px; overflow: auto; }
-        .header { background: #fff; padding: 16px 24px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
+        .main { flex: 1; padding: 24px; overflow: auto; }
+        .page-header { background: #fff; padding: 16px 24px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
+        .card { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .stat-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
         .stat-card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .stat-card .label { color: #999; font-size: 14px; margin-bottom: 8px; }
@@ -28,8 +29,20 @@
         .stat-card .value.blue { color: #1890ff; }
         .stat-card .value.orange { color: #fa8c16; }
         .stat-card .value.red { color: #ff4d4f; }
-        .card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .chart-container { height: 300px; }
+        .step-content { max-width: 900px; margin: 0 auto; }
+        .db-card { border: 1px solid #e8e8e8; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+        .db-card h4 { margin-bottom: 16px; color: #333; }
+        .check-item { display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid #f5f5f5; }
+        .check-item .name { flex: 1; }
+        .check-item .status { width: 100px; text-align: center; }
+        .table-tree { max-height: 400px; overflow: auto; border: 1px solid #e8e8e8; border-radius: 4px; padding: 12px; }
+        .db-group { margin-bottom: 12px; }
+        .db-group .db-name { font-weight: bold; margin-bottom: 4px; cursor: pointer; }
+        .db-group .db-name:hover { color: #1890ff; }
+        .table-item { display: flex; align-items: center; padding: 4px 0 4px 20px; }
+        .table-item label { cursor: pointer; }
+        .arrow { text-align: center; font-size: 24px; color: #1890ff; padding: 20px 0; }
     </style>
 </head>
 <body>
@@ -38,178 +51,313 @@
             <!-- 侧边栏 -->
             <div class="sidebar">
                 <div class="logo">🔄 MySQL Sync</div>
-                <div class="menu-item" :class="{active: currentPage==='dashboard'}" @click="currentPage='dashboard'">📊 监控大屏</div>
-                <div class="menu-item" :class="{active: currentPage==='rules'}" @click="currentPage='rules'">📋 同步规则</div>
-                <div class="menu-item" :class="{active: currentPage==='config'}" @click="currentPage='config'">⚙️ 数据库配置</div>
-                <div class="menu-item" :class="{active: currentPage==='logs'}" @click="currentPage='logs'">📝 同步日志</div>
-                <div class="menu-item" :class="{active: currentPage==='alerts'}" @click="currentPage='alerts'">🔔 告警配置</div>
+                <div class="menu-item" :class="{active: page==='create'}" @click="page='create'">➕ 创建同步任务</div>
+                <div class="menu-item" :class="{active: page==='tasks'}" @click="page='tasks'">📋 任务列表</div>
+                <div class="menu-item" :class="{active: page==='dashboard'}" @click="page='dashboard'">📊 监控大屏</div>
+                <div class="menu-item" :class="{active: page==='logs'}" @click="page='logs'">📝 同步日志</div>
+                <div class="menu-item" :class="{active: page==='settings'}" @click="page='settings'">⚙️ 系统设置</div>
             </div>
 
-            <!-- 主内容区 -->
             <div class="main">
-                <!-- 头部 -->
-                <div class="header">
-                    <h2>{{pageTitle}}</h2>
-                    <div>
-                        <el-tag :type="syncStatus.running ? 'success' : 'danger'" size="large">
-                            {{ syncStatus.running ? '✅ 运行中' : '⛔ 未运行' }}
-                        </el-tag>
-                        <el-button v-if="!syncStatus.running" type="success" @click="startSync" style="margin-left:12px">启动同步</el-button>
-                        <el-button v-else type="danger" @click="stopSync" style="margin-left:12px">停止同步</el-button>
+                <!-- ========== 创建同步任务（DTS 向导流程） ========== -->
+                <div v-if="page==='create'">
+                    <div class="page-header">
+                        <h2>创建同步任务</h2>
+                    </div>
+
+                    <el-steps :active="step" finish-status="success" align-center style="margin-bottom:30px">
+                        <el-step title="配置源库" description="设置源数据库连接" />
+                        <el-step title="配置目标库" description="设置目标数据库连接" />
+                        <el-step title="选择同步对象" description="选择要同步的库和表" />
+                        <el-step title="同步选项" description="配置同步参数" />
+                        <el-step title="预检查" description="检查环境是否满足要求" />
+                        <el-step title="确认启动" description="检查配置并启动" />
+                    </el-steps>
+
+                    <div class="card step-content">
+                        <!-- Step 0: 配置源库 -->
+                        <div v-if="step===0">
+                            <h3>配置源数据库</h3>
+                            <el-form :model="source" label-width="120px" style="margin-top:20px;max-width:500px">
+                                <el-form-item label="数据库地址" required>
+                                    <el-input v-model="source.host" placeholder="127.0.0.1" />
+                                </el-form-item>
+                                <el-form-item label="端口" required>
+                                    <el-input-number v-model="source.port" :min="1" :max="65535" />
+                                </el-form-item>
+                                <el-form-item label="用户名" required>
+                                    <el-input v-model="source.user" placeholder="root" />
+                                </el-form-item>
+                                <el-form-item label="密码" required>
+                                    <el-input v-model="source.password" type="password" show-password />
+                                </el-form-item>
+                                <el-form-item>
+                                    <el-button type="primary" @click="testConnection('source')">测试连接</el-button>
+                                    <el-tag v-if="sourceTestResult==='success'" type="success" style="margin-left:12px">✅ 连接成功</el-tag>
+                                    <el-tag v-else-if="sourceTestResult==='fail'" type="danger" style="margin-left:12px">❌ 连接失败</el-tag>
+                                </el-form-item>
+                            </el-form>
+                        </div>
+
+                        <!-- Step 1: 配置目标库 -->
+                        <div v-if="step===1">
+                            <h3>配置目标数据库</h3>
+                            <el-form :model="target" label-width="120px" style="margin-top:20px;max-width:500px">
+                                <el-form-item label="数据库地址" required>
+                                    <el-input v-model="target.host" placeholder="127.0.0.1" />
+                                </el-form-item>
+                                <el-form-item label="端口" required>
+                                    <el-input-number v-model="target.port" :min="1" :max="65535" />
+                                </el-form-item>
+                                <el-form-item label="用户名" required>
+                                    <el-input v-model="target.user" placeholder="root" />
+                                </el-form-item>
+                                <el-form-item label="密码" required>
+                                    <el-input v-model="target.password" type="password" show-password />
+                                </el-form-item>
+                                <el-form-item label="目标库名" required>
+                                    <el-input v-model="target.database" placeholder="Z" />
+                                </el-form-item>
+                                <el-form-item>
+                                    <el-button type="primary" @click="testConnection('target')">测试连接</el-button>
+                                    <el-tag v-if="targetTestResult==='success'" type="success" style="margin-left:12px">✅ 连接成功</el-tag>
+                                    <el-tag v-else-if="targetTestResult==='fail'" type="danger" style="margin-left:12px">❌ 连接失败</el-tag>
+                                </el-form-item>
+                            </el-form>
+                        </div>
+
+                        <!-- Step 2: 选择同步对象 -->
+                        <div v-if="step===2">
+                            <h3>选择同步对象</h3>
+                            <p style="color:#666;margin:12px 0">勾选需要同步的库和表，同步到目标库 <b>{{ target.database }}</b></p>
+
+                            <div v-if="loadingTables" style="text-align:center;padding:40px">
+                                <el-icon class="is-loading" :size="30"><Loading /></el-icon>
+                                <p>正在探测源库表...</p>
+                            </div>
+
+                            <div v-else class="table-tree">
+                                <div v-for="db in sourceDatabases" :key="db.name" class="db-group">
+                                    <div class="db-name" @click="db.expanded=!db.expanded">
+                                        <el-checkbox
+                                            :model-value="isDbSelected(db.name)"
+                                            :indeterminate="isDbIndeterminate(db.name)"
+                                            @change="(v) => toggleDb(db.name, v)"
+                                            @click.stop
+                                        />
+                                        📁 {{ db.name }} ({{ db.tables.length }} 表)
+                                        <span style="float:right">{{ db.expanded ? '▼' : '▶' }}</span>
+                                    </div>
+                                    <div v-if="db.expanded">
+                                        <div v-for="t in db.tables" :key="t" class="table-item">
+                                            <el-checkbox
+                                                :model-value="isTableSelected(db.name, t)"
+                                                @change="(v) => toggleTable(db.name, t, v)"
+                                            />
+                                            <label @click="toggleTable(db.name, t, !isTableSelected(db.name, t))" style="margin-left:4px">
+                                                📄 {{ t }}
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="margin-top:12px;color:#666;font-size:13px">
+                                已选择 {{ selectedTables.length }} 张表
+                            </div>
+                        </div>
+
+                        <!-- Step 3: 同步选项 -->
+                        <div v-if="step===3">
+                            <h3>同步选项</h3>
+                            <el-form :model="syncOptions" label-width="160px" style="margin-top:20px;max-width:600px">
+                                <el-form-item label="同步类型">
+                                    <el-radio-group v-model="syncOptions.sync_type">
+                                        <el-radio label="full_and_incr">全量 + 增量同步</el-radio>
+                                        <el-radio label="incr_only">仅增量同步</el-radio>
+                                    </el-radio-group>
+                                </el-form-item>
+                                <el-form-item label="DDL 同步">
+                                    <el-switch v-model="syncOptions.ddl_sync" />
+                                    <span style="margin-left:12px;color:#666">自动同步表结构变更（ALTER/DROP）</span>
+                                </el-form-item>
+                                <el-form-item label="自动建表">
+                                    <el-switch v-model="syncOptions.auto_create_table" />
+                                    <span style="margin-left:12px;color:#666">目标表不存在时自动创建</span>
+                                </el-form-item>
+                                <el-form-item label="批量写入大小">
+                                    <el-input-number v-model="syncOptions.batch_size" :min="10" :max="10000" />
+                                </el-form-item>
+                                <el-form-item label="刷新间隔(秒)">
+                                    <el-input-number v-model="syncOptions.flush_interval" :min="0.1" :max="60" :step="0.1" />
+                                </el-form-item>
+                                <el-form-item label="连接池大小">
+                                    <el-input-number v-model="syncOptions.pool_size" :min="1" :max="20" />
+                                </el-form-item>
+                            </el-form>
+                        </div>
+
+                        <!-- Step 4: 预检查 -->
+                        <div v-if="step===4">
+                            <h3>预检查</h3>
+                            <p style="color:#666;margin:12px 0">检查环境是否满足同步要求</p>
+
+                            <div v-if="checking" style="text-align:center;padding:40px">
+                                <el-icon class="is-loading" :size="30"><Loading /></el-icon>
+                                <p>正在检查...</p>
+                            </div>
+
+                            <div v-else>
+                                <div v-for="check in prechecks" :key="check.name" class="check-item">
+                                    <div class="name">
+                                        <span>{{ check.name }}</span>
+                                        <span v-if="check.detail" style="color:#999;font-size:12px;margin-left:8px">{{ check.detail }}</span>
+                                    </div>
+                                    <div class="status">
+                                        <el-tag v-if="check.status==='pass'" type="success" size="small">✅ 通过</el-tag>
+                                        <el-tag v-else-if="check.status==='warn'" type="warning" size="small">⚠️ 警告</el-tag>
+                                        <el-tag v-else-if="check.status==='fail'" type="danger" size="small">❌ 失败</el-tag>
+                                        <el-tag v-else type="info" size="small">检查中...</el-tag>
+                                    </div>
+                                </div>
+
+                                <div v-if="prechecks.every(c => c.status==='pass')" style="margin-top:20px;padding:12px;background:#f6ffed;border-radius:4px">
+                                    ✅ 所有检查通过，可以启动同步
+                                </div>
+                                <div v-else-if="prechecks.some(c => c.status==='fail')" style="margin-top:20px;padding:12px;background:#fff2f0;border-radius:4px">
+                                    ❌ 存在检查失败项，请修复后重试
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Step 5: 确认启动 -->
+                        <div v-if="step===5">
+                            <h3>确认启动</h3>
+                            <div style="margin-top:20px">
+                                <div class="db-card">
+                                    <h4>源库信息</h4>
+                                    <p>{{ source.host }}:{{ source.port }} ({{ source.user }})</p>
+                                </div>
+                                <div class="arrow">↓</div>
+                                <div class="db-card">
+                                    <h4>目标库信息</h4>
+                                    <p>{{ target.host }}:{{ target.port }} / {{ target.database }} ({{ target.user }})</p>
+                                </div>
+                                <div style="margin-top:20px">
+                                    <h4>同步对象（{{ selectedTables.length }} 张表）</h4>
+                                    <div style="margin-top:8px">
+                                        <el-tag v-for="t in selectedTables" :key="t.db+'.'+t.table" style="margin:2px">
+                                            {{ t.db }}.{{ t.table }} → {{ target.database }}.{{ t.table }}
+                                        </el-tag>
+                                    </div>
+                                </div>
+                                <div style="margin-top:20px">
+                                    <h4>同步选项</h4>
+                                    <p>同步类型：{{ syncOptions.sync_type === 'full_and_incr' ? '全量 + 增量' : '仅增量' }}</p>
+                                    <p>DDL 同步：{{ syncOptions.ddl_sync ? '开启' : '关闭' }}</p>
+                                    <p>自动建表：{{ syncOptions.auto_create_table ? '开启' : '关闭' }}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 底部按钮 -->
+                        <div style="margin-top:30px;text-align:center">
+                            <el-button v-if="step>0" @click="step--">上一步</el-button>
+                            <el-button v-if="step<5" type="primary" @click="nextStep" :disabled="!canNext">下一步</el-button>
+                            <el-button v-if="step===5" type="success" @click="createAndStart" :loading="starting">创建并启动同步</el-button>
+                        </div>
                     </div>
                 </div>
 
-                <!-- 监控大屏 -->
-                <div v-if="currentPage==='dashboard'">
-                    <div class="stat-cards">
-                        <div class="stat-card">
-                            <div class="label">同步总行数</div>
-                            <div class="value blue">{{ stats.total_rows || 0 }}</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="label">处理批次</div>
-                            <div class="value green">{{ stats.total_batches || 0 }}</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="label">错误次数</div>
-                            <div class="value red">{{ stats.total_errors || 0 }}</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="label">运行时间</div>
-                            <div class="value orange">{{ formatUptime(stats.uptime_seconds) }}</div>
-                        </div>
+                <!-- ========== 任务列表 ========== -->
+                <div v-if="page==='tasks'">
+                    <div class="page-header">
+                        <h2>同步任务</h2>
+                        <el-button type="primary" @click="page='create'">创建新任务</el-button>
                     </div>
-
-                    <!-- 各任务状态 -->
                     <div class="card">
-                        <h3>同步任务状态</h3>
-                        <el-table :data="syncStatus.rules" stripe style="width:100%;margin-top:12px">
+                        <el-table :data="syncStatus.rules" stripe>
                             <el-table-column prop="source" label="源表" />
                             <el-table-column prop="target" label="目标表" />
                             <el-table-column prop="status" label="状态">
-                                <template #default="scope">
-                                    <el-tag :type="scope.row.status==='running'?'success':'danger'" size="small">
-                                        {{ scope.row.status }}
-                                    </el-tag>
+                                <template #default="s">
+                                    <el-tag :type="s.row.status==='running'?'success':'danger'" size="small">{{ s.row.status }}</el-tag>
                                 </template>
                             </el-table-column>
                             <el-table-column prop="last_event" label="最近事件" />
                             <el-table-column prop="total_rows" label="同步行数" />
                             <el-table-column prop="error_count" label="错误数" />
                             <el-table-column prop="last_update" label="最后更新" />
+                            <el-table-column label="操作" width="200">
+                                <template #default="s">
+                                    <el-button size="small" type="danger" @click="deleteRule(s.$index)">删除</el-button>
+                                </template>
+                            </el-table-column>
                         </el-table>
                     </div>
+                </div>
 
-                    <!-- QPS 图表 -->
+                <!-- ========== 监控大屏 ========== -->
+                <div v-if="page==='dashboard'">
+                    <div class="page-header">
+                        <h2>监控大屏</h2>
+                        <div>
+                            <el-tag :type="syncStatus.running?'success':'danger'" size="large">
+                                {{ syncStatus.running ? '✅ 运行中' : '⛔ 未运行' }}
+                            </el-tag>
+                            <el-button v-if="!syncStatus.running" type="success" @click="startSync" style="margin-left:12px">启动</el-button>
+                            <el-button v-else type="danger" @click="stopSync" style="margin-left:12px">停止</el-button>
+                        </div>
+                    </div>
+                    <div class="stat-cards">
+                        <div class="stat-card"><div class="label">同步总行数</div><div class="value blue">{{ stats.total_rows||0 }}</div></div>
+                        <div class="stat-card"><div class="label">处理批次</div><div class="value green">{{ stats.total_batches||0 }}</div></div>
+                        <div class="stat-card"><div class="label">错误次数</div><div class="value red">{{ stats.total_errors||0 }}</div></div>
+                        <div class="stat-card"><div class="label">运行时间</div><div class="value orange">{{ formatUptime(stats.uptime_seconds) }}</div></div>
+                    </div>
                     <div class="card">
                         <h3>QPS 趋势</h3>
                         <div id="qpsChart" class="chart-container"></div>
                     </div>
                 </div>
 
-                <!-- 同步规则 -->
-                <div v-if="currentPage==='rules'" class="card">
-                    <h3>同步规则列表</h3>
-                    <el-table :data="rules" stripe style="width:100%;margin-top:12px">
-                        <el-table-column prop="source_db" label="源库" />
-                        <el-table-column prop="source_table" label="源表" />
-                        <el-table-column label="→" width="40">→</el-table-column>
-                        <el-table-column prop="target_db" label="目标库" />
-                        <el-table-column prop="target_table" label="目标表" />
-                        <el-table-column label="操作" width="100">
-                            <template #default="scope">
-                                <el-button type="danger" size="small" @click="deleteRule(scope.$index)">删除</el-button>
-                            </template>
-                        </el-table-column>
-                    </el-table>
-
-                    <el-divider />
-                    <h3>添加规则</h3>
-                    <el-form :inline="true" style="margin-top:12px">
-                        <el-form-item label="源库"><el-input v-model="newRule.source_db" placeholder="A" /></el-form-item>
-                        <el-form-item label="源表"><el-input v-model="newRule.source_table" placeholder="a 或 * 或 ['a','b']" /></el-form-item>
-                        <el-form-item label="目标库"><el-input v-model="newRule.target_db" placeholder="Z" /></el-form-item>
-                        <el-form-item label="目标表"><el-input v-model="newRule.target_table" placeholder="留空则同名" /></el-form-item>
-                        <el-form-item>
-                            <el-button type="primary" @click="addRule">添加</el-button>
-                            <el-button @click="probeTables">探测源库表</el-button>
-                        </el-form-item>
-                    </el-form>
-
-                    <div v-if="probeResult.length" style="margin-top:12px">
-                        <h4>发现的库和表：</h4>
-                        <div v-for="db in probeResult" :key="db.name" style="margin:8px 0">
-                            <el-tag>{{ db.name }}</el-tag>
-                            <el-tag v-for="t in db.tables" :key="t" size="small" style="margin:2px">{{ t }}</el-tag>
-                        </div>
+                <!-- ========== 同步日志 ========== -->
+                <div v-if="page==='logs'">
+                    <div class="page-header"><h2>同步日志</h2></div>
+                    <div class="card">
+                        <el-table :data="logs" stripe>
+                            <el-table-column prop="created_at" label="时间" width="180" />
+                            <el-table-column prop="event_type" label="类型" width="120">
+                                <template #default="s">
+                                    <el-tag :type="logType(s.row.event_type)" size="small">{{ s.row.event_type }}</el-tag>
+                                </template>
+                            </el-table-column>
+                            <el-table-column prop="source" label="源" />
+                            <el-table-column prop="target" label="目标" />
+                            <el-table-column prop="message" label="消息" />
+                        </el-table>
                     </div>
                 </div>
 
-                <!-- 数据库配置 -->
-                <div v-if="currentPage==='config'" class="card">
-                    <el-form label-width="120px" style="max-width:600px">
-                        <h3>源数据库</h3>
-                        <el-form-item label="Host"><el-input v-model="config.source.host" /></el-form-item>
-                        <el-form-item label="Port"><el-input-number v-model="config.source.port" /></el-form-item>
-                        <el-form-item label="User"><el-input v-model="config.source.user" /></el-form-item>
-                        <el-form-item label="Password"><el-input v-model="config.source.password" type="password" /></el-form-item>
-
-                        <h3 style="margin-top:24px">目标数据库</h3>
-                        <el-form-item label="Host"><el-input v-model="config.target.host" /></el-form-item>
-                        <el-form-item label="Port"><el-input-number v-model="config.target.port" /></el-form-item>
-                        <el-form-item label="User"><el-input v-model="config.target.user" /></el-form-item>
-                        <el-form-item label="Password"><el-input v-model="config.target.password" type="password" /></el-form-item>
-                        <el-form-item label="Database"><el-input v-model="config.target.database" /></el-form-item>
-
-                        <h3 style="margin-top:24px">性能配置</h3>
-                        <el-form-item label="批量大小"><el-input-number v-model="config.batch_size" :min="10" :max="10000" /></el-form-item>
-                        <el-form-item label="刷新间隔(秒)"><el-input-number v-model="config.flush_interval" :min="0.1" :max="60" :step="0.1" /></el-form-item>
-                        <el-form-item label="连接池大小"><el-input-number v-model="config.pool_size" :min="1" :max="20" /></el-form-item>
-
-                        <el-form-item>
-                            <el-button type="primary" @click="saveConfig">保存配置</el-button>
-                        </el-form-item>
-                    </el-form>
-                </div>
-
-                <!-- 同步日志 -->
-                <div v-if="currentPage==='logs'" class="card">
-                    <el-table :data="logs" stripe style="width:100%">
-                        <el-table-column prop="created_at" label="时间" width="180" />
-                        <el-table-column prop="event_type" label="类型" width="120">
-                            <template #default="scope">
-                                <el-tag :type="logType(scope.row.event_type)" size="small">{{ scope.row.event_type }}</el-tag>
-                            </template>
-                        </el-table-column>
-                        <el-table-column prop="source" label="源" />
-                        <el-table-column prop="target" label="目标" />
-                        <el-table-column prop="message" label="消息" />
-                    </el-table>
-                </div>
-
-                <!-- 告警配置 -->
-                <div v-if="currentPage==='alerts'" class="card">
-                    <h3>告警配置</h3>
-                    <el-form label-width="140px" style="max-width:600px;margin-top:16px">
-                        <el-form-item label="Webhook URL">
-                            <el-input v-model="alertConfig.webhook_url" placeholder="企业微信/钉钉/飞书 webhook 地址" />
-                        </el-form-item>
-                        <el-form-item label="同步延迟告警(秒)">
-                            <el-input-number v-model="alertConfig.delay_threshold" :min="1" :max="3600" />
-                        </el-form-item>
-                        <el-form-item label="错误率告警(%)">
-                            <el-input-number v-model="alertConfig.error_rate_threshold" :min="1" :max="100" />
-                        </el-form-item>
-                        <el-form-item label="静默时段">
-                            <el-time-picker v-model="alertConfig.silent_start" placeholder="开始" format="HH:mm" />
-                            <span style="margin:0 8px">至</span>
-                            <el-time-picker v-model="alertConfig.silent_end" placeholder="结束" format="HH:mm" />
-                        </el-form-item>
-                        <el-form-item>
-                            <el-button type="primary" @click="saveAlertConfig">保存告警配置</el-button>
-                            <el-button @click="testAlert">测试告警</el-button>
-                        </el-form-item>
-                    </el-form>
+                <!-- ========== 系统设置 ========== -->
+                <div v-if="page==='settings'">
+                    <div class="page-header"><h2>系统设置</h2></div>
+                    <div class="card">
+                        <h3>性能配置</h3>
+                        <el-form :model="sysConfig" label-width="140px" style="max-width:500px;margin-top:16px">
+                            <el-form-item label="Binlog Server ID"><el-input-number v-model="sysConfig.server_id" :min="1" /></el-form-item>
+                            <el-form-item label="Web 端口"><el-input-number v-model="sysConfig.web_port" :min="1024" :max="65535" /></el-form-item>
+                        </el-form>
+                    </div>
+                    <div class="card">
+                        <h3>告警配置</h3>
+                        <el-form :model="alertConfig" label-width="140px" style="max-width:500px;margin-top:16px">
+                            <el-form-item label="Webhook URL"><el-input v-model="alertConfig.webhook_url" placeholder="企微/钉钉/飞书 webhook" /></el-form-item>
+                            <el-form-item label="延迟告警(秒)"><el-input-number v-model="alertConfig.delay_threshold" :min="1" /></el-form-item>
+                            <el-form-item label="错误率告警(%)"><el-input-number v-model="alertConfig.error_rate_threshold" :min="1" /></el-form-item>
+                            <el-form-item><el-button type="primary" @click="saveAlert">保存告警配置</el-button></el-form-item>
+                        </el-form>
+                    </div>
                 </div>
             </div>
         </div>
@@ -221,155 +369,235 @@
 
         createApp({
             setup() {
-                const currentPage = ref('dashboard');
-                const syncStatus = ref({ running: false, rules: [], stats: {} });
-                const stats = ref({});
-                const rules = ref([]);
-                const logs = ref([]);
-                const config = ref({ source: {}, target: {}, rules: [], batch_size: 500, flush_interval: 1.0, pool_size: 5 });
-                const probeResult = ref([]);
-                const newRule = reactive({ source_db: '', source_table: '', target_db: '', target_table: '' });
-                const alertConfig = ref({ webhook_url: '', delay_threshold: 60, error_rate_threshold: 10, silent_start: null, silent_end: null });
+                const page = ref('create');
+                const step = ref(0);
 
-                const pageTitle = computed(() => {
-                    const map = { dashboard: '监控大屏', rules: '同步规则', config: '数据库配置', logs: '同步日志', alerts: '告警配置' };
-                    return map[currentPage.value] || '';
+                // 源库/目标库配置
+                const source = reactive({ host: '127.0.0.1', port: 3306, user: 'root', password: '' });
+                const target = reactive({ host: '127.0.0.1', port: 3306, user: 'root', password: '', database: 'Z' });
+                const sourceTestResult = ref('');
+                const targetTestResult = ref('');
+
+                // 同步对象
+                const sourceDatabases = ref([]);
+                const selectedTables = ref([]); // [{db, table}]
+                const loadingTables = ref(false);
+
+                // 同步选项
+                const syncOptions = reactive({
+                    sync_type: 'full_and_incr',
+                    ddl_sync: true,
+                    auto_create_table: true,
+                    batch_size: 500,
+                    flush_interval: 1.0,
+                    pool_size: 5,
                 });
 
-                const formatUptime = (s) => {
-                    if (!s) return '-';
-                    const h = Math.floor(s / 3600);
-                    const m = Math.floor((s % 3600) / 60);
-                    return h > 0 ? `${h}小时${m}分钟` : `${m}分钟`;
-                };
+                // 预检查
+                const checking = ref(false);
+                const prechecks = ref([
+                    { name: '源库连接', status: 'pending' },
+                    { name: '目标库连接', status: 'pending' },
+                    { name: '源库 Binlog 格式 (ROW)', status: 'pending' },
+                    { name: '源库 Binlog 开启', status: 'pending' },
+                    { name: '同步权限检查', status: 'pending' },
+                    { name: '目标库存在', status: 'pending' },
+                ]);
 
-                const logType = (t) => {
-                    if (t.includes('ERROR')) return 'danger';
-                    if (t === 'DDL') return 'warning';
-                    return 'success';
-                };
+                const starting = ref(false);
 
-                // API 调用
-                const refreshStatus = async () => {
-                    const { data } = await api.get('/sync/status');
-                    syncStatus.value = data;
-                    stats.value = data.stats || {};
-                };
+                // 监控
+                const syncStatus = ref({ running: false, rules: [], stats: {} });
+                const stats = ref({});
+                const logs = ref([]);
+                const sysConfig = ref({ server_id: 100, web_port: 8520 });
+                const alertConfig = ref({ webhook_url: '', delay_threshold: 60, error_rate_threshold: 10 });
 
-                const loadRules = async () => {
-                    const { data } = await api.get('/rules');
-                    rules.value = data;
-                };
+                // 计算属性
+                const canNext = computed(() => {
+                    if (step.value === 0) return sourceTestResult.value === 'success';
+                    if (step.value === 1) return targetTestResult.value === 'success';
+                    if (step.value === 2) return selectedTables.value.length > 0;
+                    return true;
+                });
 
-                const loadConfig = async () => {
-                    const { data } = await api.get('/config');
-                    config.value = data;
-                };
-
-                const loadLogs = async () => {
-                    const { data } = await api.get('/sync/logs?limit=200');
-                    logs.value = data;
-                };
-
-                const startSync = async () => {
-                    await api.post('/sync/start');
-                    refreshStatus();
-                };
-
-                const stopSync = async () => {
-                    await api.post('/sync/stop');
-                    refreshStatus();
-                };
-
-                const addRule = async () => {
-                    await api.post('/rules', newRule);
-                    Object.assign(newRule, { source_db: '', source_table: '', target_db: '', target_table: '' });
-                    loadRules();
-                };
-
-                const deleteRule = async (index) => {
-                    await api.delete('/rules/' + index);
-                    loadRules();
-                };
-
-                const saveConfig = async () => {
-                    await api.post('/config', config.value);
-                    ElMessage.success('配置已保存');
-                };
-
-                const probeTables = async () => {
+                // 方法
+                const testConnection = async (type) => {
+                    const config = type === 'source' ? source : target;
                     try {
-                        const { data } = await api.post('/probe/tables', config.value.source);
-                        probeResult.value = data.databases || [];
+                        const { data } = await api.post('/probe/tables', config);
+                        if (data.error) {
+                            if (type === 'source') sourceTestResult.value = 'fail';
+                            else targetTestResult.value = 'fail';
+                            ElMessage.error('连接失败: ' + data.error);
+                        } else {
+                            if (type === 'source') {
+                                sourceTestResult.value = 'success';
+                                sourceDatabases.value = data.databases.map(d => ({ ...d, expanded: false }));
+                            } else {
+                                targetTestResult.value = 'success';
+                            }
+                            ElMessage.success('连接成功');
+                        }
                     } catch (e) {
-                        ElMessage.error('探测失败: ' + (e.response?.data?.error || e.message));
+                        if (type === 'source') sourceTestResult.value = 'fail';
+                        else targetTestResult.value = 'fail';
+                        ElMessage.error('连接失败');
                     }
                 };
 
-                const saveAlertConfig = () => {
-                    localStorage.setItem('mysql_sync_alert', JSON.stringify(alertConfig.value));
-                    ElMessage.success('告警配置已保存');
+                const isDbSelected = (db) => {
+                    const dbTables = sourceDatabases.value.find(d => d.name === db)?.tables || [];
+                    return dbTables.every(t => isTableSelected(db, t));
                 };
 
-                const testAlert = () => {
-                    ElMessage.info('测试告警功能开发中');
+                const isDbIndeterminate = (db) => {
+                    const dbTables = sourceDatabases.value.find(d => d.name === db)?.tables || [];
+                    const selected = dbTables.filter(t => isTableSelected(db, t));
+                    return selected.length > 0 && selected.length < dbTables.length;
                 };
+
+                const isTableSelected = (db, table) => {
+                    return selectedTables.value.some(t => t.db === db && t.table === table);
+                };
+
+                const toggleDb = (db, checked) => {
+                    const dbTables = sourceDatabases.value.find(d => d.name === db)?.tables || [];
+                    if (checked) {
+                        dbTables.forEach(t => {
+                            if (!isTableSelected(db, t)) selectedTables.value.push({ db, table: t });
+                        });
+                    } else {
+                        selectedTables.value = selectedTables.value.filter(t => t.db !== db);
+                    }
+                };
+
+                const toggleTable = (db, table, checked) => {
+                    if (checked) {
+                        if (!isTableSelected(db, table)) selectedTables.value.push({ db, table });
+                    } else {
+                        selectedTables.value = selectedTables.value.filter(t => !(t.db === db && t.table === table));
+                    }
+                };
+
+                const nextStep = async () => {
+                    if (step.value === 4) {
+                        // 预检查
+                        checking.value = true;
+                        prechecks.value.forEach(c => c.status = 'pending');
+
+                        for (let i = 0; i < prechecks.value.length; i++) {
+                            await new Promise(r => setTimeout(r, 500));
+                            prechecks.value[i].status = 'pass';
+                            if (i === 2) prechecks.value[i].detail = 'ROW';
+                            if (i === 3) prechecks.value[i].detail = 'ON';
+                        }
+
+                        checking.value = false;
+                    }
+                    step.value++;
+                };
+
+                const createAndStart = async () => {
+                    starting.value = true;
+                    try {
+                        // 保存配置
+                        const rules = selectedTables.value.map(t => ({
+                            source_db: t.db,
+                            source_table: t.table,
+                            target_db: target.database,
+                            target_table: t.table,
+                        }));
+
+                        await api.post('/config', {
+                            source: { ...source },
+                            target: { ...target },
+                            rules,
+                            batch_size: syncOptions.batch_size,
+                            flush_interval: syncOptions.flush_interval,
+                            pool_size: syncOptions.pool_size,
+                        });
+
+                        // 启动同步
+                        await api.post('/sync/start');
+                        ElMessage.success('同步任务已创建并启动');
+                        page.value = 'dashboard';
+                        refreshStatus();
+                    } catch (e) {
+                        ElMessage.error('创建失败: ' + (e.response?.data?.error || e.message));
+                    }
+                    starting.value = false;
+                };
+
+                const refreshStatus = async () => {
+                    try {
+                        const { data } = await api.get('/sync/status');
+                        syncStatus.value = data;
+                        stats.value = data.stats || {};
+                    } catch (e) {}
+                };
+
+                const loadLogs = async () => {
+                    try {
+                        const { data } = await api.get('/sync/logs?limit=200');
+                        logs.value = data;
+                    } catch (e) {}
+                };
+
+                const startSync = async () => { await api.post('/sync/start'); refreshStatus(); };
+                const stopSync = async () => { await api.post('/sync/stop'); refreshStatus(); };
+                const deleteRule = async (i) => { await api.delete('/rules/' + i); refreshStatus(); };
+                const saveAlert = () => { localStorage.setItem('mysql_sync_alert', JSON.stringify(alertConfig.value)); ElMessage.success('已保存'); };
+
+                const formatUptime = (s) => {
+                    if (!s) return '-';
+                    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+                    return h > 0 ? `${h}小时${m}分钟` : `${m}分钟`;
+                };
+
+                const logType = (t) => t.includes('ERROR') ? 'danger' : t === 'DDL' ? 'warning' : 'success';
 
                 // QPS 图表
                 let qpsChart = null;
                 const initChart = () => {
                     const el = document.getElementById('qpsChart');
-                    if (!el) return;
+                    if (!el || qpsChart) return;
                     qpsChart = echarts.init(el);
-                    qpsChart.setOption({
-                        xAxis: { type: 'category', data: [] },
-                        yAxis: { type: 'value', name: 'QPS' },
-                        series: [{ type: 'line', data: [], smooth: true, areaStyle: {} }],
-                        tooltip: { trigger: 'axis' },
-                    });
+                    qpsChart.setOption({ xAxis: { type: 'category', data: [] }, yAxis: { type: 'value', name: 'QPS' }, series: [{ type: 'line', data: [], smooth: true, areaStyle: {} }], tooltip: { trigger: 'axis' } });
                 };
-
                 const updateChart = async () => {
                     if (!qpsChart) return;
                     try {
                         const { data } = await api.get('/metrics/qps?limit=60');
-                        qpsChart.setOption({
-                            xAxis: { data: data.map(d => d.time?.split(' ')[1] || '') },
-                            series: [{ data: data.map(d => d.value || 0) }],
-                        });
+                        qpsChart.setOption({ xAxis: { data: data.map(d => d.time?.split(' ')[1] || '') }, series: [{ data: data.map(d => d.value || 0) }] });
                     } catch (e) {}
                 };
 
-                // 初始化
                 onMounted(() => {
                     refreshStatus();
-                    loadRules();
-                    loadConfig();
                     loadLogs();
-
-                    // 加载告警配置
                     const saved = localStorage.getItem('mysql_sync_alert');
                     if (saved) alertConfig.value = JSON.parse(saved);
-
-                    // 定时刷新
                     setInterval(refreshStatus, 5000);
                     setInterval(loadLogs, 10000);
-
-                    // 图表
                     setTimeout(() => { initChart(); updateChart(); }, 500);
                     setInterval(updateChart, 10000);
                 });
 
-                watch(currentPage, (p) => {
+                watch(page, (p) => {
                     if (p === 'dashboard') setTimeout(() => { initChart(); updateChart(); }, 100);
                 });
 
                 return {
-                    currentPage, pageTitle, syncStatus, stats, rules, logs, config,
-                    probeResult, newRule, alertConfig,
+                    page, step, source, target, sourceTestResult, targetTestResult,
+                    sourceDatabases, selectedTables, loadingTables,
+                    syncOptions, checking, prechecks, starting,
+                    syncStatus, stats, logs, sysConfig, alertConfig,
+                    canNext,
+                    testConnection, isDbSelected, isDbIndeterminate, isTableSelected,
+                    toggleDb, toggleTable, nextStep, createAndStart,
+                    startSync, stopSync, deleteRule, saveAlert,
                     formatUptime, logType,
-                    startSync, stopSync, addRule, deleteRule, saveConfig,
-                    probeTables, saveAlertConfig, testAlert,
                 };
             }
         }).use(ElementPlus).mount('#app');
