@@ -55,6 +55,7 @@
                 <div class="menu-item" :class="{active: page==='tasks'}" @click="page='tasks'">📋 任务列表</div>
                 <div class="menu-item" :class="{active: page==='dashboard'}" @click="page='dashboard'">📊 监控大屏</div>
                 <div class="menu-item" :class="{active: page==='logs'}" @click="page='logs'">📝 同步日志</div>
+                <div class="menu-item" :class="{active: page==='checker'}" @click="page='checker'">🔍 数据校验</div>
                 <div class="menu-item" :class="{active: page==='settings'}" @click="page='settings'">⚙️ 系统设置</div>
             </div>
 
@@ -339,6 +340,48 @@
                     </div>
                 </div>
 
+                <!-- ========== 数据校验 ========== -->
+                <div v-if="page==='checker'">
+                    <div class="page-header">
+                        <h2>数据校验</h2>
+                        <el-button type="primary" @click="runCheck" :loading="checking">校验所有表</el-button>
+                    </div>
+                    <div class="card">
+                        <p style="color:#666;margin-bottom:16px">检查源表和目标表的数据一致性（行数对比 + 抽样校验）</p>
+                        <el-table :data="checkResults" stripe>
+                            <el-table-column prop="source" label="源表" />
+                            <el-table-column label="→" width="40">→</el-table-column>
+                            <el-table-column prop="target" label="目标表" />
+                            <el-table-column prop="src_count" label="源行数" width="100" />
+                            <el-table-column prop="tgt_count" label="目标行数" width="100" />
+                            <el-table-column prop="diff" label="差异" width="80">
+                                <template #default="s">
+                                    <span :style="{color: s.row.diff===0?'#52c41a':'#ff4d4f'}">{{ s.row.diff }}</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column prop="sample_match" label="抽样匹配" width="100">
+                                <template #default="s">
+                                    <span v-if="s.row.sample_match!==null">{{ s.row.sample_match }}%</span>
+                                    <span v-else style="color:#999">-</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column prop="status" label="状态" width="120">
+                                <template #default="s">
+                                    <el-tag v-if="s.row.status==='consistent'" type="success" size="small">✅ 一致</el-tag>
+                                    <el-tag v-else-if="s.row.status==='slight_diff'" type="warning" size="small">⚠️ 微小差异</el-tag>
+                                    <el-tag v-else-if="s.row.status==='inconsistent'" type="danger" size="small">❌ 不一致</el-tag>
+                                    <el-tag v-else type="info" size="small">{{ s.row.status }}</el-tag>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="操作" width="120">
+                                <template #default="s">
+                                    <el-button v-if="s.row.status==='inconsistent'" size="small" type="warning" @click="repairTable(s.row)">修复</el-button>
+                                </template>
+                            </el-table-column>
+                        </el-table>
+                    </div>
+                </div>
+
                 <!-- ========== 系统设置 ========== -->
                 <div v-if="page==='settings'">
                     <div class="page-header"><h2>系统设置</h2></div>
@@ -412,6 +455,8 @@
                 const logs = ref([]);
                 const sysConfig = ref({ server_id: 100, web_port: 8520 });
                 const alertConfig = ref({ webhook_url: '', delay_threshold: 60, error_rate_threshold: 10 });
+                const checkResults = ref([]);
+                const checking = ref(false);
 
                 // 计算属性
                 const canNext = computed(() => {
@@ -549,6 +594,37 @@
                 const deleteRule = async (i) => { await api.delete('/rules/' + i); refreshStatus(); };
                 const saveAlert = () => { localStorage.setItem('mysql_sync_alert', JSON.stringify(alertConfig.value)); ElMessage.success('已保存'); };
 
+                const runCheck = async () => {
+                    checking.value = true;
+                    try {
+                        const { data } = await api.post('/check');
+                        checkResults.value = Array.isArray(data) ? data : [data];
+                        ElMessage.success('校验完成');
+                    } catch (e) {
+                        ElMessage.error('校验失败');
+                    }
+                    checking.value = false;
+                };
+
+                const repairTable = async (row) => {
+                    const [srcDb, srcTable] = row.source.split('.');
+                    const [tgtDb, tgtTable] = row.target.split('.');
+                    try {
+                        const { data } = await api.post('/check/repair', {
+                            source_db: srcDb, source_table: srcTable,
+                            target_db: tgtDb, target_table: tgtTable,
+                        });
+                        if (data.status === 'ok') {
+                            ElMessage.success(`修复完成: ${data.repaired} 行`);
+                            runCheck();
+                        } else {
+                            ElMessage.error('修复失败: ' + (data.message || data.status));
+                        }
+                    } catch (e) {
+                        ElMessage.error('修复失败');
+                    }
+                };
+
                 const formatUptime = (s) => {
                     if (!s) return '-';
                     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
@@ -593,10 +669,12 @@
                     sourceDatabases, selectedTables, loadingTables,
                     syncOptions, checking, prechecks, starting,
                     syncStatus, stats, logs, sysConfig, alertConfig,
+                    checkResults,
                     canNext,
                     testConnection, isDbSelected, isDbIndeterminate, isTableSelected,
                     toggleDb, toggleTable, nextStep, createAndStart,
                     startSync, stopSync, deleteRule, saveAlert,
+                    runCheck, repairTable,
                     formatUptime, logType,
                 };
             }

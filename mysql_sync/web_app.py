@@ -242,6 +242,46 @@ def create_app(config: AppConfig) -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # ===== 数据校验 =====
+
+    @app.route("/api/check", methods=["POST"])
+    def run_check():
+        from .checker import DataChecker
+        data = request.json or {}
+        checker = DataChecker(config, state)
+        try:
+            if "source_db" in data:
+                # 校验指定表
+                result = checker.check_single(
+                    data["source_db"], data["source_table"],
+                    data.get("target_db", config.target.database),
+                    data.get("target_table", data["source_table"])
+                )
+                return jsonify(result)
+            else:
+                # 校验所有表
+                results = checker.check_all()
+                return jsonify(results)
+        finally:
+            checker.close()
+
+    @app.route("/api/check/repair", methods=["POST"])
+    def run_repair():
+        from .checker import DataChecker
+        data = request.json
+        if not data:
+            return jsonify({"error": "需要指定表"}), 400
+        checker = DataChecker(config, state)
+        try:
+            result = checker.auto_repair(
+                data["source_db"], data["source_table"],
+                data.get("target_db", config.target.database),
+                data.get("target_table", data["source_table"])
+            )
+            return jsonify(result)
+        finally:
+            checker.close()
+
     # ===== 健康检查 =====
 
     @app.route("/api/health", methods=["GET"])
