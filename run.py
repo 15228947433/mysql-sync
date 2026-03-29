@@ -64,6 +64,14 @@ def cmd_status(args):
         print(f"{source:<25} {target:<25} {s[4]:<10} {s[5] or '-':<10} {s[8]:<10}")
 
 
+def cmd_version(args):
+    """显示版本"""
+    from mysql_sync import __version__, __author__
+    print(f"MySQL Sync v{__version__}")
+    print(f"Author: {__author__}")
+    print(f"License: MIT")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="MySQL Sync — 轻量级 MySQL 跨库/跨实例表同步工具",
@@ -84,6 +92,9 @@ def main():
     # status 命令
     status_parser = subparsers.add_parser("status", help="查看同步状态")
 
+    # version 命令
+    version_parser = subparsers.add_parser("version", help="显示版本")
+
     args = parser.parse_args()
 
     if args.command == "sync":
@@ -92,6 +103,8 @@ def main():
         cmd_web(args)
     elif args.command == "status":
         cmd_status(args)
+    elif args.command == "version":
+        cmd_version(args)
     else:
         parser.print_help()
 
