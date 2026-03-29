@@ -242,6 +242,31 @@ def create_app(config: AppConfig) -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # ===== 告警配置 =====
+
+    @app.route("/api/alert/config", methods=["GET"])
+    def get_alert_config():
+        from .alert import load_alert_config
+        return jsonify(load_alert_config())
+
+    @app.route("/api/alert/config", methods=["POST"])
+    def save_alert():
+        from .alert import save_alert_config, AlertManager
+        data = request.json
+        save_alert_config(data)
+        # 测试发送
+        if data.get("test"):
+            manager = AlertManager(
+                webhook_url=data.get("webhook_url", ""),
+                delay_threshold=data.get("delay_threshold", 60),
+                error_rate_threshold=data.get("error_rate_threshold", 10),
+                silent_start=data.get("silent_start"),
+                silent_end=data.get("silent_end"),
+            )
+            manager.test()
+            return jsonify({"ok": True, "message": "已保存并发送测试消息"})
+        return jsonify({"ok": True})
+
     # ===== 数据校验 =====
 
     @app.route("/api/check", methods=["POST"])
