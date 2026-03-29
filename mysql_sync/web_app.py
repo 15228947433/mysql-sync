@@ -267,6 +267,64 @@ def create_app(config: AppConfig) -> Flask:
             return jsonify({"ok": True, "message": "已保存并发送测试消息"})
         return jsonify({"ok": True})
 
+    # ===== 自动校验 =====
+
+    auto_check_thread = None
+    auto_check_running = False
+
+    def auto_check_loop(interval, alert_config):
+        """自动校验循环"""
+        from .checker import DataChecker
+        from .alert import AlertManager
+        nonlocal auto_check_running
+
+        manager = AlertManager(**alert_config) if alert_config.get("webhook_url") else None
+
+        while auto_check_running:
+            try:
+                checker = DataChecker(config, state, manager)
+                results = checker.check_all()
+                checker.close()
+
+                inconsistent = [r for r in results if r["status"] == "inconsistent"]
+                if inconsistent:
+                    logger.warning(f"自动校验发现 {len(inconsistent)} 张表不一致")
+                else:
+                    logger.info(f"自动校验通过: {len(results)} 张表一致")
+            except Exception as e:
+                logger.error(f"自动校验异常: {e}")
+
+            time.sleep(interval)
+
+    @app.route("/api/check/auto", methods=["POST"])
+    def start_auto_check():
+        nonlocal auto_check_thread, auto_check_running
+        data = request.json or {}
+        interval = data.get("interval", 3600)  # 默认1小时
+
+        if auto_check_running:
+            return jsonify({"error": "自动校验已在运行"}), 400
+
+        from .alert import load_alert_config
+        alert_config = load_alert_config()
+
+        auto_check_running = True
+        auto_check_thread = threading.Thread(
+            target=auto_check_loop, args=(interval, alert_config), daemon=True
+        )
+        auto_check_thread.start()
+        return jsonify({"ok": True, "message": f"自动校验已启动，间隔 {interval} 秒"})
+
+    @app.route("/api/check/auto", methods=["DELETE"])
+    def stop_auto_check():
+        nonlocal auto_check_running
+        auto_check_running = False
+        return jsonify({"ok": True, "message": "自动校验已停止"})
+
+    @app.route("/api/check/auto", methods=["GET"])
+    def auto_check_status():
+        return jsonify({"running": auto_check_running})
+
     # ===== 数据校验 =====
 
     @app.route("/api/check", methods=["POST"])

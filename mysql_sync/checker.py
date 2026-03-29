@@ -14,9 +14,10 @@ logger = logging.getLogger("mysql_sync")
 class DataChecker:
     """数据一致性校验器"""
 
-    def __init__(self, config: AppConfig, state: SyncState):
+    def __init__(self, config: AppConfig, state: SyncState, alert_manager=None):
         self.config = config
         self.state = state
+        self.alert_manager = alert_manager
         self.src_pool = ConnectionPool(config.source.to_dict(), pool_size=2)
         self.dst_pool = ConnectionPool(config.target.to_dict(), pool_size=2)
         self.running = False
@@ -97,6 +98,11 @@ class DataChecker:
                 result["status"] = "slight_diff"
             else:
                 result["status"] = "inconsistent"
+                # 发送告警
+                if self.alert_manager:
+                    self.alert_manager.alert_data_inconsistent(
+                        result["source"], result["target"], result["diff"]
+                    )
 
             # 记录到日志
             self.state.add_log(
