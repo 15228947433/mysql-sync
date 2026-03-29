@@ -53,6 +53,8 @@ class AppConfig:
     batch_size: int = 500       # 批量写入大小
     flush_interval: float = 1.0 # 强制刷新间隔（秒）
     pool_size: int = 5          # 连接池大小
+    # 同步类型: "full_and_incr" | "incr" | "full"
+    sync_type: str = "full_and_incr"
 
 
 def load_config(config_path: str = "config.yaml") -> AppConfig:

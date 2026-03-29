@@ -169,11 +169,14 @@ def create_app(config: AppConfig) -> Flask:
                     "source": f"{s[0]}.{s[1]}",
                     "target": f"{s[2]}.{s[3]}",
                     "status": s[4],
-                    "last_event": s[5],
-                    "last_update": s[6],
-                    "error_count": s[7],
-                    "total_rows": s[8],
-                    "batch_count": s[9] if len(s) > 9 else 0,
+                    "phase": s[5],
+                    "last_event": s[6],
+                    "last_update": s[7],
+                    "error_count": s[8],
+                    "total_rows": s[9],
+                    "full_sync_rows": s[10] if len(s) > 10 else 0,
+                    "incr_sync_rows": s[11] if len(s) > 11 else 0,
+                    "progress": s[12] if len(s) > 12 else 0,
                 }
                 for s in statuses
             ]
