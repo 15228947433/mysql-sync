@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MySQL Sync - 跨库同步管理</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { margin-bottom: 20px; color: #1a1a1a; }
+        h2 { margin: 20px 0 10px; color: #333; font-size: 18px; }
+        .card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .status-bar { display: flex; gap: 20px; align-items: center; margin-bottom: 15px; }
+        .status-dot { width: 12px; height: 12px; border-radius: 50%; }
+        .status-dot.running { background: #52c41a; }
+        .status-dot.stopped { background: #ff4d4f; }
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+        .btn-primary { background: #1890ff; color: #fff; }
+        .btn-danger { background: #ff4d4f; color: #fff; }
+        .btn-success { background: #52c41a; color: #fff; }
+        .btn:hover { opacity: 0.85; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #f0f0f0; }
+        th { background: #fafafa; font-weight: 600; }
+        input, select { padding: 6px 10px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 14px; }
+        input:focus, select:focus { border-color: #1890ff; outline: none; }
+        .form-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group label { font-size: 12px; color: #666; }
+        .log-entry { padding: 6px 0; border-bottom: 1px solid #f5f5f5; font-size: 13px; }
+        .log-entry .time { color: #999; margin-right: 8px; }
+        .log-entry .type { padding: 2px 6px; border-radius: 3px; font-size: 12px; margin-right: 8px; }
+        .log-entry .type.DML { background: #e6f7ff; color: #1890ff; }
+        .log-entry .type.DDL { background: #fff7e6; color: #fa8c16; }
+        .log-entry .type.ERROR { background: #fff1f0; color: #ff4d4f; }
+        .tabs { display: flex; gap: 0; border-bottom: 2px solid #f0f0f0; margin-bottom: 15px; }
+        .tab { padding: 8px 16px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+        .tab.active { border-bottom-color: #1890ff; color: #1890ff; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔄 MySQL Sync — 跨库同步管理</h1>
+
+        <!-- 状态栏 -->
+        <div class="card">
+            <div class="status-bar">
+                <div class="status-dot stopped" id="statusDot"></div>
+                <span id="statusText">未运行</span>
+                <button class="btn btn-success" id="btnStart" onclick="startSync()">启动同步</button>
+                <button class="btn btn-danger" id="btnStop" onclick="stopSync()" disabled>停止同步</button>
+                <button class="btn btn-primary" onclick="refreshStatus()">刷新状态</button>
+            </div>
+        </div>
+
+        <!-- Tab 切换 -->
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('rules')">📋 同步规则</div>
+            <div class="tab" onclick="switchTab('config')">⚙️ 数据库配置</div>
+            <div class="tab" onclick="switchTab('logs')">📝 同步日志</div>
+        </div>
+
+        <!-- 同步规则 -->
+        <div class="card" id="tab-rules">
+            <h2>同步规则</h2>
+            <table>
+                <thead>
+                    <tr><th>源库</th><th>源表</th><th>→</th><th>目标库</th><th>目标表</th><th>操作</th></tr>
+                </thead>
+                <tbody id="rulesTable"></tbody>
+            </table>
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #f0f0f0;">
+                <h2>添加规则</h2>
+                <div class="form-row">
+                    <div class="form-group"><label>源库</label><input id="newSrcDb" placeholder="A"></div>
+                    <div class="form-group"><label>源表</label><input id="newSrcTable" placeholder="a"></div>
+                    <span style="margin-top: 18px;">→</span>
+                    <div class="form-group"><label>目标库</label><input id="newTgtDb" placeholder="Z"></div>
+                    <div class="form-group"><label>目标表</label><input id="newTgtTable" placeholder="a"></div>
+                    <button class="btn btn-primary" style="margin-top: 18px;" onclick="addRule()">添加</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 数据库配置 -->
+        <div class="card hidden" id="tab-config">
+            <h2>源数据库</h2>
+            <div class="form-row">
+                <div class="form-group"><label>Host</label><input id="srcHost" value="127.0.0.1"></div>
+                <div class="form-group"><label>Port</label><input id="srcPort" value="3306" type="number"></div>
+                <div class="form-group"><label>User</label><input id="srcUser" value="root"></div>
+                <div class="form-group"><label>Password</label><input id="srcPass" type="password"></div>
+            </div>
+            <h2>目标数据库</h2>
+            <div class="form-row">
+                <div class="form-group"><label>Host</label><input id="tgtHost" value="127.0.0.1"></div>
+                <div class="form-group"><label>Port</label><input id="tgtPort" value="3306" type="number"></div>
+                <div class="form-group"><label>User</label><input id="tgtUser" value="root"></div>
+                <div class="form-group"><label>Password</label><input id="tgtPass" type="password"></div>
+                <div class="form-group"><label>Database</label><input id="tgtDb" value="Z"></div>
+            </div>
+            <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-primary" onclick="probeTables()" style="margin-left: 10px;">探测源库表</button>
+        </div>
+
+        <!-- 同步日志 -->
+        <div class="card hidden" id="tab-logs">
+            <h2>最近日志</h2>
+            <div id="logsContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        // Tab 切换
+        function switchTab(name) {
+            document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.add('hidden'));
+            document.getElementById('tab-' + name).classList.remove('hidden');
+            document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        // API 调用
+        async function api(url, method = 'GET', body = null) {
+            const opts = { method, headers: { 'Content-Type': 'application/json' } };
+            if (body) opts.body = JSON.stringify(body);
+            const res = await fetch(url, opts);
+            return res.json();
+        }
+
+        // 加载配置
+        async function loadConfig() {
+            const data = await api('/api/config');
+            document.getElementById('srcHost').value = data.source.host;
+            document.getElementById('srcPort').value = data.source.port;
+            document.getElementById('srcUser').value = data.source.user;
+            document.getElementById('tgtHost').value = data.target.host;
+            document.getElementById('tgtPort').value = data.target.port;
+            document.getElementById('tgtUser').value = data.target.user;
+            document.getElementById('tgtDb').value = data.target.database;
+            renderRules(data.rules);
+        }
+
+        // 渲染规则
+        function renderRules(rules) {
+            const tbody = document.getElementById('rulesTable');
+            tbody.innerHTML = rules.map((r, i) => `
+                <tr>
+                    <td>${r.source_db}</td>
+                    <td>${r.source_table}</td>
+                    <td>→</td>
+                    <td>${r.target_db}</td>
+                    <td>${r.target_table}</td>
+                    <td><button class="btn btn-danger" onclick="deleteRule(${i})">删除</button></td>
+                </tr>
+            `).join('');
+            if (rules.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999;">暂无规则，点击上方"探测源库表"自动发现</td></tr>';
+            }
+        }
+
+        // 添加规则
+        async function addRule() {
+            const srcDb = document.getElementById('newSrcDb').value;
+            const srcTable = document.getElementById('newSrcTable').value;
+            const tgtDb = document.getElementById('newTgtDb').value || document.getElementById('tgtDb').value;
+            const tgtTable = document.getElementById('newTgtTable').value || srcTable;
+            if (!srcDb || !srcTable) { alert('请填写源库和源表'); return; }
+            await api('/api/rules', 'POST', { source_db: srcDb, source_table: srcTable, target_db: tgtDb, target_table: tgtTable });
+            loadConfig();
+        }
+
+        // 删除规则
+        async function deleteRule(index) {
+            await api('/api/rules/' + index, 'DELETE');
+            loadConfig();
+        }
+
+        // 保存配置
+        async function saveConfig() {
+            await api('/api/config', 'POST', {
+                source: {
+                    host: document.getElementById('srcHost').value,
+                    port: parseInt(document.getElementById('srcPort').value),
+                    user: document.getElementById('srcUser').value,
+                    password: document.getElementById('srcPass').value,
+                },
+                target: {
+                    host: document.getElementById('tgtHost').value,
+                    port: parseInt(document.getElementById('tgtPort').value),
+                    user: document.getElementById('tgtUser').value,
+                    password: document.getElementById('tgtPass').value,
+                    database: document.getElementById('tgtDb').value,
+                }
+            });
+            alert('配置已保存');
+        }
+
+        // 探测源库表
+        async function probeTables() {
+            const data = await api('/api/probe/tables', 'POST', {
+                host: document.getElementById('srcHost').value,
+                port: parseInt(document.getElementById('srcPort').value),
+                user: document.getElementById('srcUser').value,
+                password: document.getElementById('srcPass').value,
+            });
+            if (data.error) { alert('探测失败: ' + data.error); return; }
+            let html = '<h3>发现的库和表：</h3>';
+            data.databases.forEach(db => {
+                html += `<p><b>${db.name}</b>: ${db.tables.join(', ')}</p>`;
+            });
+            html += '<p style="margin-top:10px;color:#666;font-size:13px;">在上方填写同步规则，格式：源库.表 → 目标库.表</p>';
+            document.getElementById('rulesTable').innerHTML += `<tr><td colspan="6">${html}</td></tr>`;
+        }
+
+        // 启动同步
+        async function startSync() {
+            const data = await api('/api/sync/start', 'POST');
+            if (data.error) { alert(data.error); return; }
+            refreshStatus();
+        }
+
+        // 停止同步
+        async function stopSync() {
+            await api('/api/sync/stop', 'POST');
+            refreshStatus();
+        }
+
+        // 刷新状态
+        async function refreshStatus() {
+            const data = await api('/api/sync/status');
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            const btnStart = document.getElementById('btnStart');
+            const btnStop = document.getElementById('btnStop');
+
+            if (data.running) {
+                dot.className = 'status-dot running';
+                text.textContent = '运行中';
+                btnStart.disabled = true;
+                btnStop.disabled = false;
+            } else {
+                dot.className = 'status-dot stopped';
+                text.textContent = '未运行';
+                btnStart.disabled = false;
+                btnStop.disabled = true;
+            }
+        }
+
+        // 加载日志
+        async function loadLogs() {
+            const data = await api('/api/sync/logs?limit=50');
+            const container = document.getElementById('logsContainer');
+            container.innerHTML = data.map(l => `
+                <div class="log-entry">
+                    <span class="time">${l.created_at}</span>
+                    <span class="type ${l.event_type}">${l.event_type}</span>
+                    ${l.source} → ${l.target}: ${l.message}
+                </div>
+            `).join('') || '<p style="color:#999;">暂无日志</p>';
+        }
+
+        // 初始化
+        loadConfig();
+        refreshStatus();
+        setInterval(refreshStatus, 5000);
+        setInterval(loadLogs, 10000);
+    </script>
+</body>
+</html>

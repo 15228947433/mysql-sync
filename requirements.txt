@@ -1,0 +1,4 @@
+pymysql>=1.1.0
+mysql-replication>=0.30
+PyYAML>=6.0
+flask>=3.0

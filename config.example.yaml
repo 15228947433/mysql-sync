@@ -1,0 +1,39 @@
+# 源数据库
+source:
+  host: "127.0.0.1"
+  port: 3306
+  user: "root"
+  password: "your_password"
+
+# 目标数据库
+target:
+  host: "127.0.0.1"
+  port: 3306
+  user: "root"
+  password: "your_password"
+  database: "Z"
+
+# 同步规则
+# source_db.source_table → target_db.target_table
+rules:
+  - source_db: "A"
+    source_table: "a"
+    target_db: "Z"
+    target_table: "a"
+  - source_db: "B"
+    source_table: "b"
+    target_db: "Z"
+    target_table: "b"
+  - source_db: "C"
+    source_table: "c"
+    target_db: "Z"
+    target_table: "c"
+
+# Binlog server_id（不能跟其他从库冲突）
+server_id: 100
+
+# Web 管理界面端口
+web_port: 8520
+
+# 日志级别
+log_level: "INFO"

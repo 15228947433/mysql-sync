@@ -1,0 +1,12 @@
+services:
+  mysql-sync:
+    build: .
+    container_name: mysql-sync
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8520}:8520"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
