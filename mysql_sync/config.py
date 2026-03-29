@@ -28,9 +28,9 @@ class MySQLConfig:
 @dataclass
 class SyncRule:
     source_db: str
-    source_table: str
+    source_table: str  # 支持 "*"、"table_name"、或列表（通过配置文件加载时展开）
     target_db: str
-    target_table: str
+    target_table: str = ""  # 空表示跟源表同名
 
 
 @dataclass
@@ -83,15 +83,39 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
             database=tgt.get("database", "Z"),
         )
 
-    # 解析同步规则
+    # 解析同步规则（支持通配符 * 和表列表）
     if "rules" in data:
         for rule in data["rules"]:
-            config.rules.append(SyncRule(
-                source_db=rule["source_db"],
-                source_table=rule["source_table"],
-                target_db=rule.get("target_db", config.target.database),
-                target_table=rule.get("target_table", rule["source_table"]),
-            ))
+            src_db = rule["source_db"]
+            src_table = rule["source_table"]
+            tgt_db = rule.get("target_db", config.target.database)
+            tgt_table = rule.get("target_table", "")
+
+            if isinstance(src_table, list):
+                # 表列表：["a", "b", "c"] → 展开为多条规则
+                for t in src_table:
+                    config.rules.append(SyncRule(
+                        source_db=src_db,
+                        source_table=t,
+                        target_db=tgt_db,
+                        target_table=tgt_table or t,
+                    ))
+            elif src_table == "*":
+                # 通配符：标记为 *，运行时展开
+                config.rules.append(SyncRule(
+                    source_db=src_db,
+                    source_table="*",
+                    target_db=tgt_db,
+                    target_table="*",
+                ))
+            else:
+                # 单表
+                config.rules.append(SyncRule(
+                    source_db=src_db,
+                    source_table=src_table,
+                    target_db=tgt_db,
+                    target_table=tgt_table or src_table,
+                ))
 
     # 通用配置
     config.server_id = data.get("server_id", 100)

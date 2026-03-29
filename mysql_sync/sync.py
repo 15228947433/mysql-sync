@@ -93,11 +93,27 @@ class MySQLSyncer:
         self._rules_map = {}  # (db, table) -> SyncRule
 
     def _build_rules_map(self):
-        """构建规则映射表"""
+        """构建规则映射表，展开通配符"""
         self._rules_map = {}
         for rule in self.config.rules:
-            key = (rule.source_db, rule.source_table)
-            self._rules_map[key] = rule
+            if rule.source_table == "*":
+                # 通配符：获取源库所有表
+                src_conn = self._get_src_conn()
+                try:
+                    rows = src_conn.execute(f"SHOW TABLES FROM `{rule.source_db}`").fetchall()
+                    for (table_name,) in rows:
+                        key = (rule.source_db, table_name)
+                        self._rules_map[key] = SyncRule(
+                            source_db=rule.source_db,
+                            source_table=table_name,
+                            target_db=rule.target_db,
+                            target_table=table_name,
+                        )
+                finally:
+                    src_conn.close()
+            else:
+                key = (rule.source_db, rule.source_table)
+                self._rules_map[key] = rule
 
     def _should_sync(self, schema: str, table: str) -> bool:
         """判断是否需要同步"""
