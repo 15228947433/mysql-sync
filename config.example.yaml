@@ -34,6 +34,11 @@ rules:
 # Binlog server_id（不能跟其他从库冲突）
 server_id: 100
 
+# 性能配置
+batch_size: 500          # 批量写入大小（攒够多少条再写）
+flush_interval: 1.0      # 强制刷新间隔（秒）
+pool_size: 5             # 数据库连接池大小
+
 # Web 管理界面端口
 web_port: 8520
 

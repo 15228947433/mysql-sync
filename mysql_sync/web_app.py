@@ -1,5 +1,6 @@
 """
-Web 管理界面 — 基于 Flask
+Web 管理界面 — 基于 Flask（企业级）
+支持：任务管理 | 监控大屏 | 告警配置 | API 接口
 """
 import json
 import threading
@@ -54,6 +55,9 @@ def create_app(config: AppConfig) -> Flask:
                 for r in config.rules
             ],
             "server_id": config.server_id,
+            "batch_size": config.batch_size,
+            "flush_interval": config.flush_interval,
+            "pool_size": config.pool_size,
             "web_port": config.web_port,
         })
 
@@ -86,6 +90,10 @@ def create_app(config: AppConfig) -> Flask:
                 )
                 for r in data["rules"]
             ]
+
+        config.batch_size = data.get("batch_size", config.batch_size)
+        config.flush_interval = data.get("flush_interval", config.flush_interval)
+        config.pool_size = data.get("pool_size", config.pool_size)
 
         save_config(config)
         return jsonify({"ok": True})
@@ -152,8 +160,10 @@ def create_app(config: AppConfig) -> Flask:
     def sync_status():
         is_running = syncer is not None and sync_thread is not None and sync_thread.is_alive()
         statuses = state.get_all_status()
+        stats = syncer.get_stats() if syncer else state.get_stats()
         return jsonify({
             "running": is_running,
+            "stats": stats,
             "rules": [
                 {
                     "source": f"{s[0]}.{s[1]}",
@@ -163,6 +173,7 @@ def create_app(config: AppConfig) -> Flask:
                     "last_update": s[6],
                     "error_count": s[7],
                     "total_rows": s[8],
+                    "batch_count": s[9] if len(s) > 9 else 0,
                 }
                 for s in statuses
             ]
@@ -183,11 +194,26 @@ def create_app(config: AppConfig) -> Flask:
             for l in logs
         ])
 
+    # ===== 监控指标 =====
+
+    @app.route("/api/metrics/<name>", methods=["GET"])
+    def get_metrics(name):
+        limit = request.args.get("limit", 60, type=int)
+        data = state.get_metrics(name, limit)
+        return jsonify([
+            {"value": d[0], "time": d[1]} for d in data
+        ])
+
+    @app.route("/api/stats", methods=["GET"])
+    def get_stats():
+        if syncer:
+            return jsonify(syncer.get_stats())
+        return jsonify(state.get_stats())
+
     # ===== 数据库探测 =====
 
     @app.route("/api/probe/tables", methods=["POST"])
     def probe_tables():
-        """探测源库有哪些表"""
         import pymysql
         data = request.json
         try:
@@ -212,5 +238,15 @@ def create_app(config: AppConfig) -> Flask:
             return jsonify({"databases": databases})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+    # ===== 健康检查 =====
+
+    @app.route("/api/health", methods=["GET"])
+    def health():
+        is_running = syncer is not None and sync_thread is not None and sync_thread.is_alive()
+        return jsonify({
+            "status": "healthy" if is_running else "stopped",
+            "running": is_running,
+        })
 
     return app
