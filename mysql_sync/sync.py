@@ -1,9 +1,10 @@
 """
 核心同步逻辑 — 全量 + 增量同步（企业级）
-特性：全量同步 | 增量同步 | 并行处理 | 批量写入 | 断点续传 | 连接池
+特性：全量同步 | 增量同步 | 并行处理 | 批量写入 | 断点续传 | 连接池 | 优雅退出
 """
 import logging
 import time
+import signal
 import sqlite3
 import threading
 from collections import defaultdict
@@ -80,6 +81,18 @@ class SyncState:
 
     def _init_db(self):
         self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS full_sync_progress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_db TEXT NOT NULL,
+                source_table TEXT NOT NULL,
+                target_db TEXT NOT NULL,
+                target_table TEXT NOT NULL,
+                last_offset INTEGER DEFAULT 0,
+                total_rows INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'pending',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(source_db, source_table, target_db, target_table)
+            );
             CREATE TABLE IF NOT EXISTS sync_status (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_db TEXT NOT NULL,
@@ -129,6 +142,23 @@ class SyncState:
             DO UPDATE SET phase=?, progress=?, last_update=CURRENT_TIMESTAMP, status='running'
         """, (rule.source_db, rule.source_table, rule.target_db, rule.target_table, phase, progress, phase, progress))
         self.conn.commit()
+
+    def save_full_progress(self, rule, offset, total, status="running"):
+        self.conn.execute("""
+            INSERT INTO full_sync_progress (source_db, source_table, target_db, target_table, last_offset, total_rows, status, updated_at)
+            VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+            ON CONFLICT(source_db, source_table, target_db, target_table)
+            DO UPDATE SET last_offset=?, total_rows=?, status=?, updated_at=CURRENT_TIMESTAMP
+        """, (rule.source_db, rule.source_table, rule.target_db, rule.target_table, offset, total, status, offset, total, status))
+        self.conn.commit()
+
+    def get_full_progress(self, rule):
+        cursor = self.conn.execute(
+            "SELECT last_offset, total_rows, status FROM full_sync_progress WHERE source_db=? AND source_table=? AND target_db=? AND target_table=?",
+            (rule.source_db, rule.source_table, rule.target_db, rule.target_table)
+        )
+        row = cursor.fetchone()
+        return {"offset": row[0], "total": row[1], "status": row[2]} if row else None
 
     def update_incr(self, rule, event_type, rows=0):
         self.conn.execute("""
@@ -203,11 +233,8 @@ class FullSyncer:
         self.running = True
 
     def sync_table(self, rule):
-        """全量同步单张表"""
+        """全量同步单张表（支持断点续传）"""
         logger.info(f"开始全量同步: {rule.source_db}.{rule.source_table} → {rule.target_db}.{rule.target_table}")
-        self.state.update_phase(rule, "full_sync", 0)
-        self.state.add_log("FULL_SYNC_START", f"{rule.source_db}.{rule.source_table}",
-                          f"{rule.target_db}.{rule.target_table}", "开始全量同步")
 
         src_conn = self.src_pool.get_conn()
         dst_conn = self.dst_pool.get_conn()
@@ -223,7 +250,20 @@ class FullSyncer:
                 self.state.update_phase(rule, "full_done", 100)
                 return
 
-            # 3. 获取列信息
+            # 3. 检查是否有上次进度（断点续传）
+            progress = self.state.get_full_progress(rule)
+            if progress and progress["status"] == "running" and progress["offset"] > 0:
+                offset = progress["offset"]
+                logger.info(f"从断点恢复: {rule.source_db}.{rule.source_table} offset={offset}/{total}")
+            else:
+                offset = 0
+                self.state.save_full_progress(rule, 0, total, "running")
+
+            self.state.update_phase(rule, "full_sync", round(offset / total * 100, 1))
+            self.state.add_log("FULL_SYNC_START", f"{rule.source_db}.{rule.source_table}",
+                              f"{rule.target_db}.{rule.target_table}", f"开始全量同步 (从offset={offset})")
+
+            # 4. 获取列信息
             src_conn.execute(f"SELECT * FROM `{rule.source_db}`.`{rule.source_table}` LIMIT 1")
             columns = [desc[0] for desc in src_conn.description]
             col_str = ",".join([f"`{c}`" for c in columns])
@@ -231,9 +271,8 @@ class FullSyncer:
             update_str = ",".join([f"`{c}`=VALUES(`{c}`)" for c in columns])
             sql = f"INSERT INTO `{rule.target_db}`.`{rule.target_table}` ({col_str}) VALUES ({placeholders}) ON DUPLICATE KEY UPDATE {update_str}"
 
-            # 4. 分批读取+写入
-            offset = 0
-            synced = 0
+            # 5. 分批读取+写入
+            synced = offset
             while self.running:
                 rows = src_conn.execute(
                     f"SELECT * FROM `{rule.source_db}`.`{rule.source_table}` LIMIT {self.batch_size} OFFSET {offset}"
@@ -248,7 +287,6 @@ class FullSyncer:
                     cursor.executemany(sql, params)
                     cursor.close()
                 except Exception as e:
-                    # 降级：逐条写入
                     logger.warning(f"批量写入失败，降级逐条: {e}")
                     for p in params:
                         try:
@@ -258,15 +296,19 @@ class FullSyncer:
 
                 synced += len(rows)
                 offset += self.batch_size
-                progress = round(synced / total * 100, 1)
+                progress_pct = round(synced / total * 100, 1)
                 self.state.update_full(rule, len(rows))
-                self.state.update_phase(rule, "full_sync", progress)
+                self.state.update_phase(rule, "full_sync", progress_pct)
 
-                if synced % (self.batch_size * 10) == 0:
-                    logger.info(f"全量同步进度: {rule.source_db}.{rule.source_table} {synced}/{total} ({progress}%)")
+                # 每批次保存进度（断点续传）
+                if synced % (self.batch_size * 5) == 0:
+                    self.state.save_full_progress(rule, offset, total, "running")
+                    logger.info(f"全量进度: {rule.source_db}.{rule.source_table} {synced}/{total} ({progress_pct}%)")
 
+            # 6. 完成
+            self.state.save_full_progress(rule, offset, total, "done")
             self.state.update_phase(rule, "full_done", 100)
-            logger.info(f"全量同步完成: {rule.source_db}.{rule.source_table} → {rule.target_db}.{rule.target_table} ({synced} 行)")
+            logger.info(f"全量同步完成: {rule.source_db}.{rule.source_table} ({synced} 行)")
             self.state.add_log("FULL_SYNC_DONE", f"{rule.source_db}.{rule.source_table}",
                               f"{rule.target_db}.{rule.target_table}", f"全量同步完成 {synced} 行")
 
@@ -536,12 +578,25 @@ class MySQLSyncer:
         self.state.update_incr(rule, event_type, len(rows))
         self._event_count += 1
 
+        # 批量记录日志（每1000条记录一次，避免日志爆炸）
+        if self._event_count % 1000 == 0:
+            self.state.add_log("DML_BATCH", f"{schema}.{table}",
+                              f"{rule.target_db}.{rule.target_table}", f"已处理 {self._event_count} 条")
+
     # ===== 启动 =====
 
     def start(self):
         self._build_rules_map()
         self.running = True
         self._start_time = time.time()
+
+        # 优雅退出：捕获 SIGTERM/SIGINT
+        def handle_signal(signum, frame):
+            logger.info(f"收到信号 {signum}，正在优雅退出...")
+            self.running = False
+
+        signal.signal(signal.SIGTERM, handle_signal)
+        signal.signal(signal.SIGINT, handle_signal)
 
         # 记录 binlog 位点（全量前）
         logger.info("记录初始 binlog 位点...")
