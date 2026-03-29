@@ -209,7 +209,7 @@ def create_app(config: AppConfig) -> Flask:
 
     @app.route("/api/stats", methods=["GET"])
     def get_stats():
-        if syncer:
+        if syncer and sync_thread and sync_thread.is_alive():
             return jsonify(syncer.get_stats())
         return jsonify(state.get_stats())
 

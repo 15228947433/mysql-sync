@@ -568,9 +568,11 @@
                             source: { ...source },
                             target: { ...target },
                             rules,
+                            sync_type: syncOptions.sync_type,
                             batch_size: syncOptions.batch_size,
                             flush_interval: syncOptions.flush_interval,
                             pool_size: syncOptions.pool_size,
+                            server_id: sysConfig.value.server_id,
                         });
 
                         // 启动同步

@@ -130,6 +130,10 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
     config.web_port = data.get("web_port", 8520)
     config.web_host = data.get("web_host", "0.0.0.0")
     config.state_db = data.get("state_db", "sync_state.db")
+    config.batch_size = data.get("batch_size", 500)
+    config.flush_interval = data.get("flush_interval", 1.0)
+    config.pool_size = data.get("pool_size", 5)
+    config.sync_type = data.get("sync_type", "full_and_incr")
 
     # 环境变量覆盖
     config.source.password = os.getenv("SOURCE_PASSWORD", config.source.password)
@@ -171,6 +175,10 @@ def save_config(config: AppConfig, config_path: str = "config.yaml"):
         "web_port": config.web_port,
         "web_host": config.web_host,
         "state_db": config.state_db,
+        "batch_size": config.batch_size,
+        "flush_interval": config.flush_interval,
+        "pool_size": config.pool_size,
+        "sync_type": config.sync_type,
     }
 
     with open(config_path, "w", encoding="utf-8") as f:
