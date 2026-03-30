@@ -1,49 +1,57 @@
-# 源数据库
+# MySQL Sync 配置文件
+# 复制为 config.yaml 并修改即可使用
+
+# 源数据库（从哪里同步）
 source:
   host: "127.0.0.1"
   port: 3306
   user: "root"
   password: "your_password"
 
-# 目标数据库
+# 目标数据库（同步到哪里）
 target:
   host: "127.0.0.1"
   port: 3306
   user: "root"
   password: "your_password"
-  database: "Z"
+  database: "sync_target"
 
-# 同步规则（灵活配置）
+# 同步规则
 rules:
-  # 方式1：同步整个库的所有表
-  - source_db: "A"
-    source_table: "*"         # * 表示全部表
-    target_db: "Z"
+  # 同步整个库的所有表
+  - source_db: "mydb"
+    source_table: "*"
+    target_db: "sync_target"
 
-  # 方式2：同步指定的多张表
-  - source_db: "B"
-    source_table: ["b1", "b2", "b3", "b4"]
-    target_db: "Z"
+  # 同步指定表（取消注释启用）
+  # - source_db: "mydb"
+  #   source_table: ["users", "orders", "products"]
+  #   target_db: "sync_target"
 
-  # 方式3：同步单张表，自定义目标表名
-  - source_db: "C"
-    source_table: "c"
-    target_db: "Z"
-    target_table: "c_renamed"  # 可选，不填则跟源表同名
+  # 同步单张表并重命名（取消注释启用）
+  # - source_db: "mydb"
+  #   source_table: "users"
+  #   target_db: "sync_target"
+  #   target_table: "users_backup"
+
+# ============================================================
+# 以下为高级配置，一般情况下不需要修改
+# ============================================================
 
 # Binlog server_id（不能跟其他从库冲突）
-server_id: 100
+# server_id: 100
 
 # 性能配置
-batch_size: 500          # 批量写入大小（攒够多少条再写）
-flush_interval: 1.0      # 强制刷新间隔（秒）
-pool_size: 5             # 数据库连接池大小
+# batch_size: 500          # 批量写入大小（攒够多少条再写）
+# flush_interval: 1.0      # 强制刷新间隔（秒）
+# pool_size: 5             # 数据库连接池大小
 
-# 同步类型: "full_and_incr" (全量+增量) | "incr" (仅增量) | "full" (仅全量)
-sync_type: "full_and_incr"
+# 同步类型
+# sync_type: "full_and_incr"  # full_and_incr=全量+增量 | incr=仅增量 | full=仅全量
 
-# Web 管理界面端口
-web_port: 8520
+# Web 管理界面
+# web_port: 8520
+# web_host: "0.0.0.0"
 
 # 日志级别
-log_level: "INFO"
+# log_level: "INFO"
