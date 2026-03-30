@@ -244,7 +244,10 @@ class FullSyncer:
             self._ensure_table(src_conn, dst_conn, rule)
 
             # 2. 获取总行数
-            total = src_conn.execute(f"SELECT COUNT(*) FROM `{rule.source_db}`.`{rule.source_table}`").fetchone()[0]
+            cur = src_conn.cursor()
+            cur.execute(f"SELECT COUNT(*) FROM `{rule.source_db}`.`{rule.source_table}`")
+            total = cur.fetchone()[0]
+            cur.close()
             if total == 0:
                 logger.info(f"源表为空，跳过全量同步: {rule.source_db}.{rule.source_table}")
                 self.state.update_phase(rule, "full_done", 100)
@@ -264,8 +267,10 @@ class FullSyncer:
                               f"{rule.target_db}.{rule.target_table}", f"开始全量同步 (从offset={offset})")
 
             # 4. 获取列信息
-            src_conn.execute(f"SELECT * FROM `{rule.source_db}`.`{rule.source_table}` LIMIT 1")
-            columns = [desc[0] for desc in src_conn.description]
+            cur = src_conn.cursor()
+            cur.execute(f"SELECT * FROM `{rule.source_db}`.`{rule.source_table}` LIMIT 1")
+            columns = [desc[0] for desc in cur.description]
+            cur.close()
             col_str = ",".join([f"`{c}`" for c in columns])
             placeholders = ",".join(["%s"] * len(columns))
             update_str = ",".join([f"`{c}`=VALUES(`{c}`)" for c in columns])
@@ -274,9 +279,12 @@ class FullSyncer:
             # 5. 分批读取+写入
             synced = offset
             while self.running:
-                rows = src_conn.execute(
+                cur = src_conn.cursor()
+                cur.execute(
                     f"SELECT * FROM `{rule.source_db}`.`{rule.source_table}` LIMIT {self.batch_size} OFFSET {offset}"
-                ).fetchall()
+                )
+                rows = cur.fetchall()
+                cur.close()
 
                 if not rows:
                     break
@@ -290,7 +298,9 @@ class FullSyncer:
                     logger.warning(f"批量写入失败，降级逐条: {e}")
                     for p in params:
                         try:
-                            dst_conn.execute(sql, p)
+                            c = dst_conn.cursor()
+                            c.execute(sql, p)
+                            c.close()
                         except Exception:
                             pass
 
@@ -322,14 +332,22 @@ class FullSyncer:
             self.dst_pool.put_conn(dst_conn)
 
     def _ensure_table(self, src_conn, dst_conn, rule):
-        exists = dst_conn.execute(
+        cur = dst_conn.cursor()
+        cur.execute(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=%s AND table_name=%s",
             (rule.target_db, rule.target_table)
         )
+        exists = cur.fetchone()[0]
+        cur.close()
         if exists == 0:
-            row = src_conn.execute(f"SHOW CREATE TABLE `{rule.source_db}`.`{rule.source_table}`").fetchone()
+            sc = src_conn.cursor()
+            sc.execute(f"SHOW CREATE TABLE `{rule.source_db}`.`{rule.source_table}`")
+            row = sc.fetchone()
+            sc.close()
             create_sql = row[1].replace(f"`{rule.source_db}`", f"`{rule.target_db}`")
-            dst_conn.execute(create_sql)
+            dc = dst_conn.cursor()
+            dc.execute(create_sql)
+            dc.close()
             logger.info(f"自动创建表: {rule.target_db}.{rule.target_table}")
 
     def stop(self):
@@ -378,7 +396,9 @@ class BatchWriter:
             logger.error(f"批量写入失败 {db}.{table}: {e}")
             for p in params:
                 try:
-                    conn.execute(sql, p)
+                    c = conn.cursor()
+                    c.execute(sql, p)
+                    c.close()
                 except Exception:
                     pass
         finally:
@@ -468,7 +488,10 @@ class MySQLSyncer:
             if rule.source_table == "*":
                 conn = self.src_pool.get_conn()
                 try:
-                    rows = conn.execute(f"SHOW TABLES FROM `{rule.source_db}`").fetchall()
+                    cur = conn.cursor()
+                    cur.execute(f"SHOW TABLES FROM `{rule.source_db}`")
+                    rows = cur.fetchall()
+                    cur.close()
                     for (t,) in rows:
                         self._rules_map[(rule.source_db, t)] = SyncRule(rule.source_db, t, rule.target_db, t)
                 finally:
@@ -504,7 +527,10 @@ class MySQLSyncer:
                 # 展开通配符
                 conn = self.src_pool.get_conn()
                 try:
-                    tables = conn.execute(f"SHOW TABLES FROM `{rule.source_db}`").fetchall()
+                    cur = conn.cursor()
+                    cur.execute(f"SHOW TABLES FROM `{rule.source_db}`")
+                    tables = cur.fetchall()
+                    cur.close()
                     for (t,) in tables:
                         if not self.running:
                             break
@@ -536,7 +562,9 @@ class MySQLSyncer:
 
         conn = self.dst_pool.get_conn()
         try:
-            conn.execute(translated)
+            cur = conn.cursor()
+            cur.execute(translated)
+            cur.close()
             logger.info(f"DDL 同步: {sql[:80]}")
             self.state.add_log("DDL", schema, self.config.target.database, sql[:200])
         except Exception as e:

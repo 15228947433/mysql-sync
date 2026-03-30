@@ -1,15 +1,15 @@
 """
-配置管理 — 从 YAML 文件或环境变量读取配置
+配置管理 — 全部存 SQLite，不需要配置文件
 """
 import os
-import yaml
+import sqlite3
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import List
 
 
 @dataclass
 class MySQLConfig:
-    host: str = "127.0.0.1"
+    host: str = ""
     port: int = 3306
     user: str = "root"
     password: str = ""
@@ -28,158 +28,137 @@ class MySQLConfig:
 @dataclass
 class SyncRule:
     source_db: str
-    source_table: str  # 支持 "*"、"table_name"、或列表（通过配置文件加载时展开）
+    source_table: str
     target_db: str
-    target_table: str = ""  # 空表示跟源表同名
+    target_table: str = ""
 
 
 @dataclass
 class AppConfig:
-    # 源库
     source: MySQLConfig = field(default_factory=MySQLConfig)
-    # 目标库（可以跟源库同一个实例）
-    target: MySQLConfig = field(default_factory=lambda: MySQLConfig(database="Z"))
-    # 同步规则列表
+    target: MySQLConfig = field(default_factory=MySQLConfig)
     rules: List[SyncRule] = field(default_factory=list)
-    # 通用配置
     server_id: int = 100
-    sync_interval: int = 1  # DDL 检查间隔（秒）
+    sync_interval: int = 1
     log_level: str = "INFO"
     web_port: int = 8520
     web_host: str = "0.0.0.0"
-    # 数据库文件（存储同步状态）
     state_db: str = "sync_state.db"
-    # 性能配置
-    batch_size: int = 500       # 批量写入大小
-    flush_interval: float = 1.0 # 强制刷新间隔（秒）
-    pool_size: int = 5          # 连接池大小
-    # 同步类型: "full_and_incr" | "incr" | "full"
+    batch_size: int = 500
+    flush_interval: float = 1.0
+    pool_size: int = 5
     sync_type: str = "full_and_incr"
 
+    @property
+    def configured(self) -> bool:
+        """是否有有效配置"""
+        return bool(self.source.host and self.target.host and self.rules)
 
-def load_config(config_path: str = "config.yaml") -> AppConfig:
-    """从 YAML 文件加载配置"""
-    if not os.path.exists(config_path):
-        return AppConfig()
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+def _init_config_table(db_path: str):
+    conn = sqlite3.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS sync_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            source_host TEXT DEFAULT '',
+            source_port INTEGER DEFAULT 3306,
+            source_user TEXT DEFAULT 'root',
+            source_password TEXT DEFAULT '',
+            source_database TEXT DEFAULT '',
+            target_host TEXT DEFAULT '',
+            target_port INTEGER DEFAULT 3306,
+            target_user TEXT DEFAULT 'root',
+            target_password TEXT DEFAULT '',
+            target_database TEXT DEFAULT '',
+            server_id INTEGER DEFAULT 100,
+            batch_size INTEGER DEFAULT 500,
+            flush_interval REAL DEFAULT 1.0,
+            pool_size INTEGER DEFAULT 5,
+            sync_type TEXT DEFAULT 'full_and_incr',
+            log_level TEXT DEFAULT 'INFO',
+            web_port INTEGER DEFAULT 8520,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS sync_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_db TEXT NOT NULL,
+            source_table TEXT NOT NULL,
+            target_db TEXT NOT NULL,
+            target_table TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    # 确保有默认行
+    conn.execute("INSERT OR IGNORE INTO sync_config (id) VALUES (1)")
+    conn.commit()
+    conn.close()
 
+
+def load_config(db_path: str = "sync_state.db") -> AppConfig:
+    """从 SQLite 加载配置"""
+    _init_config_table(db_path)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    row = conn.execute("SELECT * FROM sync_config WHERE id=1").fetchone()
     config = AppConfig()
 
-    # 解析源库
-    if "source" in data:
-        src = data["source"]
+    if row:
         config.source = MySQLConfig(
-            host=src.get("host", "127.0.0.1"),
-            port=src.get("port", 3306),
-            user=src.get("user", "root"),
-            password=src.get("password", ""),
-            database=src.get("database", ""),
+            host=row["source_host"] or "",
+            port=row["source_port"] or 3306,
+            user=row["source_user"] or "root",
+            password=row["source_password"] or "",
+            database=row["source_database"] or "",
         )
-
-    # 解析目标库
-    if "target" in data:
-        tgt = data["target"]
         config.target = MySQLConfig(
-            host=tgt.get("host", "127.0.0.1"),
-            port=tgt.get("port", 3306),
-            user=tgt.get("user", "root"),
-            password=tgt.get("password", ""),
-            database=tgt.get("database", "Z"),
+            host=row["target_host"] or "",
+            port=row["target_port"] or 3306,
+            user=row["target_user"] or "root",
+            password=row["target_password"] or "",
+            database=row["target_database"] or "",
         )
+        config.server_id = row["server_id"] or 100
+        config.batch_size = row["batch_size"] or 500
+        config.flush_interval = row["flush_interval"] or 1.0
+        config.pool_size = row["pool_size"] or 5
+        config.sync_type = row["sync_type"] or "full_and_incr"
+        config.log_level = row["log_level"] or "INFO"
+        config.web_port = row["web_port"] or 8520
 
-    # 解析同步规则（支持通配符 * 和表列表）
-    if "rules" in data:
-        for rule in data["rules"]:
-            src_db = rule["source_db"]
-            src_table = rule["source_table"]
-            tgt_db = rule.get("target_db", config.target.database)
-            tgt_table = rule.get("target_table", "")
+    rules = conn.execute("SELECT source_db, source_table, target_db, target_table FROM sync_rules").fetchall()
+    config.rules = [SyncRule(r["source_db"], r["source_table"], r["target_db"], r["target_table"]) for r in rules]
 
-            if isinstance(src_table, list):
-                # 表列表：["a", "b", "c"] → 展开为多条规则
-                for t in src_table:
-                    config.rules.append(SyncRule(
-                        source_db=src_db,
-                        source_table=t,
-                        target_db=tgt_db,
-                        target_table=tgt_table or t,
-                    ))
-            elif src_table == "*":
-                # 通配符：标记为 *，运行时展开
-                config.rules.append(SyncRule(
-                    source_db=src_db,
-                    source_table="*",
-                    target_db=tgt_db,
-                    target_table="*",
-                ))
-            else:
-                # 单表
-                config.rules.append(SyncRule(
-                    source_db=src_db,
-                    source_table=src_table,
-                    target_db=tgt_db,
-                    target_table=tgt_table or src_table,
-                ))
-
-    # 通用配置
-    config.server_id = data.get("server_id", 100)
-    config.sync_interval = data.get("sync_interval", 1)
-    config.log_level = data.get("log_level", "INFO")
-    config.web_port = data.get("web_port", 8520)
-    config.web_host = data.get("web_host", "0.0.0.0")
-    config.state_db = data.get("state_db", "sync_state.db")
-    config.batch_size = data.get("batch_size", 500)
-    config.flush_interval = data.get("flush_interval", 1.0)
-    config.pool_size = data.get("pool_size", 5)
-    config.sync_type = data.get("sync_type", "full_and_incr")
-
-    # 环境变量覆盖
-    config.source.password = os.getenv("SOURCE_PASSWORD", config.source.password)
-    config.target.password = os.getenv("TARGET_PASSWORD", config.target.password)
-    config.web_port = int(os.getenv("WEB_PORT", config.web_port))
-
+    conn.close()
     return config
 
 
-def save_config(config: AppConfig, config_path: str = "config.yaml"):
-    """保存配置到 YAML 文件"""
-    data = {
-        "source": {
-            "host": config.source.host,
-            "port": config.source.port,
-            "user": config.source.user,
-            "password": config.source.password,
-            "database": config.source.database,
-        },
-        "target": {
-            "host": config.target.host,
-            "port": config.target.port,
-            "user": config.target.user,
-            "password": config.target.password,
-            "database": config.target.database,
-        },
-        "rules": [
-            {
-                "source_db": r.source_db,
-                "source_table": r.source_table,
-                "target_db": r.target_db,
-                "target_table": r.target_table,
-            }
-            for r in config.rules
-        ],
-        "server_id": config.server_id,
-        "sync_interval": config.sync_interval,
-        "log_level": config.log_level,
-        "web_port": config.web_port,
-        "web_host": config.web_host,
-        "state_db": config.state_db,
-        "batch_size": config.batch_size,
-        "flush_interval": config.flush_interval,
-        "pool_size": config.pool_size,
-        "sync_type": config.sync_type,
-    }
+def save_config(config: AppConfig, db_path: str = "sync_state.db"):
+    """保存配置到 SQLite"""
+    _init_config_table(db_path)
+    conn = sqlite3.connect(db_path)
 
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+    conn.execute("""
+        UPDATE sync_config SET
+            source_host=?, source_port=?, source_user=?, source_password=?, source_database=?,
+            target_host=?, target_port=?, target_user=?, target_password=?, target_database=?,
+            server_id=?, batch_size=?, flush_interval=?, pool_size=?,
+            sync_type=?, log_level=?, web_port=?, updated_at=CURRENT_TIMESTAMP
+        WHERE id=1
+    """, (
+        config.source.host, config.source.port, config.source.user, config.source.password, config.source.database,
+        config.target.host, config.target.port, config.target.user, config.target.password, config.target.database,
+        config.server_id, config.batch_size, config.flush_interval, config.pool_size,
+        config.sync_type, config.log_level, config.web_port,
+    ))
+
+    conn.execute("DELETE FROM sync_rules")
+    for r in config.rules:
+        conn.execute(
+            "INSERT INTO sync_rules (source_db, source_table, target_db, target_table) VALUES (?,?,?,?)",
+            (r.source_db, r.source_table, r.target_db, r.target_table),
+        )
+
+    conn.commit()
+    conn.close()

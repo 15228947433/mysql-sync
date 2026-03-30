@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MySQL Sync — 跨库同步管理</title>
-    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/element-plus/2.4.4/index.min.css" />
-    <script src="https://cdn.bootcdn.net/ajax/libs/vue/3.4.0/vue.global.prod.min.js"></script>
-    <script src="https://cdn.bootcdn.net/ajax/libs/element-plus/2.4.4/index.full.min.js"></script>
-    <script src="https://cdn.bootcdn.net/ajax/libs/axios/1.6.0/axios.min.js"></script>
-    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+    <link rel="stylesheet" href="/static/vendor/element-plus.min.css?v=3" />
+    <script src="/static/vendor/vue.global.prod.min.js?v=3"></script>
+    <script src="/static/vendor/element-plus.min.js?v=3"></script>
+    <script src="/static/vendor/axios.min.js?v=3"></script>
+    <script src="/static/vendor/echarts.min.js?v=3"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f0f2f5; }
@@ -54,10 +54,10 @@
             <div class="sidebar">
                 <div class="logo">🔄 MySQL Sync</div>
                 <div class="menu-item" :class="{active: page==='create'}" @click="page='create'">➕ 创建同步任务</div>
-                <div class="menu-item" :class="{active: page==='tasks'}" @click="page='tasks'">📋 任务列表</div>
-                <div class="menu-item" :class="{active: page==='dashboard'}" @click="page='dashboard'">📊 监控大屏</div>
-                <div class="menu-item" :class="{active: page==='logs'}" @click="page='logs'">📝 同步日志</div>
-                <div class="menu-item" :class="{active: page==='checker'}" @click="page='checker'">🔍 数据校验</div>
+                <div v-if="isConfigured" class="menu-item" :class="{active: page==='tasks'}" @click="page='tasks'">📋 任务列表</div>
+                <div v-if="isConfigured" class="menu-item" :class="{active: page==='dashboard'}" @click="page='dashboard'">📊 监控大屏</div>
+                <div v-if="isConfigured" class="menu-item" :class="{active: page==='logs'}" @click="page='logs'">📝 同步日志</div>
+                <div v-if="isConfigured" class="menu-item" :class="{active: page==='checker'}" @click="page='checker'">🔍 数据校验</div>
                 <div class="menu-item" :class="{active: page==='settings'}" @click="page='settings'">⚙️ 系统设置</div>
             </div>
 
@@ -403,6 +403,11 @@
                             <el-form-item><el-button type="primary" @click="saveAlert">保存告警配置</el-button></el-form-item>
                         </el-form>
                     </div>
+                    <div class="card" v-if="isConfigured">
+                        <h3>危险操作</h3>
+                        <p style="color:#999;margin:12px 0">重置后将清空所有配置和同步记录，回到初始状态</p>
+                        <el-button type="danger" @click="resetConfig">重置所有配置</el-button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -607,6 +612,20 @@
                 const deleteRule = async (i) => { await api.delete('/rules/' + i); refreshStatus(); };
                 const saveAlert = () => { localStorage.setItem('mysql_sync_alert', JSON.stringify(alertConfig.value)); ElMessage.success('已保存'); };
 
+                const resetConfig = async () => {
+                    try {
+                        await ElMessageBox.confirm('重置将清空所有配置和同步记录，确定？', '确认重置', { type: 'warning' });
+                        await api.post('/sync/reset');
+                        isConfigured.value = false;
+                        page.value = 'create';
+                        step.value = 0;
+                        sourceTestResult.value = '';
+                        targetTestResult.value = '';
+                        selectedTables.value = [];
+                        ElMessage.success('已重置');
+                    } catch (e) { if (e !== 'cancel') ElMessage.error('重置失败'); }
+                };
+
                 const runCheck = async () => {
                     checking.value = true;
                     try {
@@ -638,6 +657,8 @@
                     }
                 };
 
+                const isConfigured = ref(false);
+
                 const formatUptime = (s) => {
                     if (!s) return '-';
                     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
@@ -662,7 +683,23 @@
                     } catch (e) {}
                 };
 
-                onMounted(() => {
+                onMounted(async () => {
+                    // 检查是否已配置
+                    try {
+                        const { data: cfg } = await api.get('/config');
+                        isConfigured.value = cfg.configured;
+                        if (cfg.configured) {
+                            page.value = 'dashboard';
+                            source.host = cfg.source.host;
+                            source.port = cfg.source.port;
+                            source.user = cfg.source.user;
+                            target.host = cfg.target.host;
+                            target.port = cfg.target.port;
+                            target.user = cfg.target.user;
+                            target.database = cfg.target.database;
+                        }
+                    } catch (e) {}
+
                     refreshStatus();
                     loadLogs();
                     const saved = localStorage.getItem('mysql_sync_alert');
@@ -682,11 +719,11 @@
                     sourceDatabases, selectedTables, loadingTables,
                     syncOptions, checking, prechecks, starting,
                     syncStatus, stats, logs, sysConfig, alertConfig,
-                    checkResults,
+                    checkResults, isConfigured,
                     canNext,
                     testConnection, isDbSelected, isDbIndeterminate, isTableSelected,
                     toggleDb, toggleTable, nextStep, createAndStart,
-                    startSync, stopSync, deleteRule, saveAlert,
+                    startSync, stopSync, deleteRule, saveAlert, resetConfig,
                     runCheck, repairTable,
                     formatUptime, logType,
                 };

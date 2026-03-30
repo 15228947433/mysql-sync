@@ -1,13 +1,14 @@
 """
-Web 管理界面 — 基于 Flask（企业级）
+Web 管理界面 — 基于 Flask
 支持：任务管理 | 监控大屏 | 告警配置 | API 接口
+配置全部存 SQLite，不需要配置文件
 """
 import json
 import threading
 import logging
 from flask import Flask, render_template, jsonify, request
 
-from .config import AppConfig, SyncRule, save_config
+from .config import AppConfig, MySQLConfig, SyncRule, save_config
 from .sync import MySQLSyncer, SyncState
 
 logger = logging.getLogger("mysql_sync")
@@ -16,7 +17,7 @@ syncer = None
 sync_thread = None
 
 
-def create_app(config: AppConfig) -> Flask:
+def create_app(config: AppConfig, db_path: str = "sync_state.db") -> Flask:
     app = Flask(
         __name__,
         template_folder="../templates",
@@ -26,13 +27,16 @@ def create_app(config: AppConfig) -> Flask:
 
     @app.route("/")
     def index():
-        return render_template("index.html")
+        resp = app.make_response(render_template("index.html"))
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
 
     # ===== 配置管理 =====
 
     @app.route("/api/config", methods=["GET"])
     def get_config():
         return jsonify({
+            "configured": config.configured,
             "source": {
                 "host": config.source.host,
                 "port": config.source.port,
@@ -58,27 +62,33 @@ def create_app(config: AppConfig) -> Flask:
             "batch_size": config.batch_size,
             "flush_interval": config.flush_interval,
             "pool_size": config.pool_size,
-            "web_port": config.web_port,
+            "sync_type": config.sync_type,
         })
 
     @app.route("/api/config", methods=["POST"])
     def update_config():
+        global syncer, sync_thread
         data = request.json
+
         if "source" in data:
             s = data["source"]
-            config.source.host = s.get("host", config.source.host)
-            config.source.port = s.get("port", config.source.port)
-            config.source.user = s.get("user", config.source.user)
-            config.source.password = s.get("password", config.source.password)
-            config.source.database = s.get("database", config.source.database)
+            config.source = MySQLConfig(
+                host=s.get("host", ""),
+                port=s.get("port", 3306),
+                user=s.get("user", "root"),
+                password=s.get("password", ""),
+                database=s.get("database", ""),
+            )
 
         if "target" in data:
             t = data["target"]
-            config.target.host = t.get("host", config.target.host)
-            config.target.port = t.get("port", config.target.port)
-            config.target.user = t.get("user", config.target.user)
-            config.target.password = t.get("password", config.target.password)
-            config.target.database = t.get("database", config.target.database)
+            config.target = MySQLConfig(
+                host=t.get("host", ""),
+                port=t.get("port", 3306),
+                user=t.get("user", "root"),
+                password=t.get("password", ""),
+                database=t.get("database", ""),
+            )
 
         if "rules" in data:
             config.rules = [
@@ -94,8 +104,22 @@ def create_app(config: AppConfig) -> Flask:
         config.batch_size = data.get("batch_size", config.batch_size)
         config.flush_interval = data.get("flush_interval", config.flush_interval)
         config.pool_size = data.get("pool_size", config.pool_size)
+        config.sync_type = data.get("sync_type", config.sync_type)
+        config.server_id = data.get("server_id", config.server_id)
 
-        save_config(config)
+        # 保存到 SQLite
+        save_config(config, db_path)
+
+        # 停止旧的同步
+        if syncer and sync_thread and sync_thread.is_alive():
+            syncer.stop()
+            syncer = None
+            sync_thread = None
+
+        # 重新加载 SyncState
+        state_db = config.state_db
+        state.__init__(state_db)
+
         return jsonify({"ok": True})
 
     # ===== 规则管理 =====
@@ -122,14 +146,14 @@ def create_app(config: AppConfig) -> Flask:
             target_table=data.get("target_table", data["source_table"]),
         )
         config.rules.append(rule)
-        save_config(config)
+        save_config(config, db_path)
         return jsonify({"ok": True})
 
     @app.route("/api/rules/<int:index>", methods=["DELETE"])
     def delete_rule(index):
         if 0 <= index < len(config.rules):
             config.rules.pop(index)
-            save_config(config)
+            save_config(config, db_path)
             return jsonify({"ok": True})
         return jsonify({"error": "index out of range"}), 400
 
@@ -140,6 +164,9 @@ def create_app(config: AppConfig) -> Flask:
         global syncer, sync_thread
         if syncer and sync_thread and sync_thread.is_alive():
             return jsonify({"error": "同步已在运行"}), 400
+
+        if not config.configured:
+            return jsonify({"error": "请先配置数据库连接和同步规则"}), 400
 
         syncer = MySQLSyncer(config, state)
         sync_thread = threading.Thread(target=syncer.start, daemon=True)
@@ -156,6 +183,35 @@ def create_app(config: AppConfig) -> Flask:
             return jsonify({"ok": True, "message": "同步已停止"})
         return jsonify({"error": "同步未运行"}), 400
 
+    @app.route("/api/sync/reset", methods=["POST"])
+    def reset_sync():
+        """重置同步状态（清空配置和状态，重新开始）"""
+        global syncer, sync_thread
+        if syncer:
+            syncer.stop()
+            syncer = None
+            sync_thread = None
+
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        conn.execute("DELETE FROM sync_rules")
+        conn.execute("""UPDATE sync_config SET
+            source_host='', source_port=3306, source_user='root', source_password='', source_database='',
+            target_host='', target_port=3306, target_user='root', target_password='', target_database='',
+            updated_at=CURRENT_TIMESTAMP WHERE id=1""")
+        conn.execute("DELETE FROM sync_status")
+        conn.execute("DELETE FROM sync_log")
+        conn.execute("DELETE FROM full_sync_progress")
+        conn.execute("DELETE FROM binlog_position")
+        conn.commit()
+        conn.close()
+
+        config.source = MySQLConfig()
+        config.target = MySQLConfig()
+        config.rules = []
+
+        return jsonify({"ok": True, "message": "已重置"})
+
     @app.route("/api/sync/status", methods=["GET"])
     def sync_status():
         is_running = syncer is not None and sync_thread is not None and sync_thread.is_alive()
@@ -163,6 +219,7 @@ def create_app(config: AppConfig) -> Flask:
         stats = syncer.get_stats() if syncer else state.get_stats()
         return jsonify({
             "running": is_running,
+            "configured": config.configured,
             "stats": stats,
             "rules": [
                 {
@@ -185,7 +242,7 @@ def create_app(config: AppConfig) -> Flask:
     @app.route("/api/sync/logs", methods=["GET"])
     def sync_logs():
         limit = request.args.get("limit", 100, type=int)
-        logs = state.get_recent_logs(limit)
+        logs_list = state.get_recent_logs(limit)
         return jsonify([
             {
                 "event_type": l[0],
@@ -194,7 +251,7 @@ def create_app(config: AppConfig) -> Flask:
                 "message": l[3],
                 "created_at": l[4],
             }
-            for l in logs
+            for l in logs_list
         ])
 
     # ===== 监控指标 =====
@@ -221,149 +278,25 @@ def create_app(config: AppConfig) -> Flask:
         data = request.json
         try:
             conn = pymysql.connect(
-                host=data.get("host", config.source.host),
-                port=data.get("port", config.source.port),
-                user=data.get("user", config.source.user),
-                password=data.get("password", config.source.password),
+                host=data.get("host", ""),
+                port=data.get("port", 3306),
+                user=data.get("user", "root"),
+                password=data.get("password", ""),
             )
+            cur = conn.cursor()
             databases = []
-            rows = conn.execute("SHOW DATABASES").fetchall()
-            for (db_name,) in rows:
+            cur.execute("SHOW DATABASES")
+            for (db_name,) in cur.fetchall():
                 if db_name in ("mysql", "sys", "information_schema", "performance_schema"):
                     continue
-                conn.execute(f"USE `{db_name}`")
-                tables = conn.execute("SHOW TABLES").fetchall()
-                databases.append({
-                    "name": db_name,
-                    "tables": [t[0] for t in tables],
-                })
+                cur.execute(f"SHOW TABLES FROM `{db_name}`")
+                tables = [t[0] for t in cur.fetchall()]
+                databases.append({"name": db_name, "tables": tables})
+            cur.close()
             conn.close()
             return jsonify({"databases": databases})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
-
-    # ===== 告警配置 =====
-
-    @app.route("/api/alert/config", methods=["GET"])
-    def get_alert_config():
-        from .alert import load_alert_config
-        return jsonify(load_alert_config())
-
-    @app.route("/api/alert/config", methods=["POST"])
-    def save_alert():
-        from .alert import save_alert_config, AlertManager
-        data = request.json
-        save_alert_config(data)
-        # 测试发送
-        if data.get("test"):
-            manager = AlertManager(
-                webhook_url=data.get("webhook_url", ""),
-                delay_threshold=data.get("delay_threshold", 60),
-                error_rate_threshold=data.get("error_rate_threshold", 10),
-                silent_start=data.get("silent_start"),
-                silent_end=data.get("silent_end"),
-            )
-            manager.test()
-            return jsonify({"ok": True, "message": "已保存并发送测试消息"})
-        return jsonify({"ok": True})
-
-    # ===== 自动校验 =====
-
-    auto_check_thread = None
-    auto_check_running = False
-
-    def auto_check_loop(interval, alert_config):
-        """自动校验循环"""
-        from .checker import DataChecker
-        from .alert import AlertManager
-        nonlocal auto_check_running
-
-        manager = AlertManager(**alert_config) if alert_config.get("webhook_url") else None
-
-        while auto_check_running:
-            try:
-                checker = DataChecker(config, state, manager)
-                results = checker.check_all()
-                checker.close()
-
-                inconsistent = [r for r in results if r["status"] == "inconsistent"]
-                if inconsistent:
-                    logger.warning(f"自动校验发现 {len(inconsistent)} 张表不一致")
-                else:
-                    logger.info(f"自动校验通过: {len(results)} 张表一致")
-            except Exception as e:
-                logger.error(f"自动校验异常: {e}")
-
-            time.sleep(interval)
-
-    @app.route("/api/check/auto", methods=["POST"])
-    def start_auto_check():
-        nonlocal auto_check_thread, auto_check_running
-        data = request.json or {}
-        interval = data.get("interval", 3600)  # 默认1小时
-
-        if auto_check_running:
-            return jsonify({"error": "自动校验已在运行"}), 400
-
-        from .alert import load_alert_config
-        alert_config = load_alert_config()
-
-        auto_check_running = True
-        auto_check_thread = threading.Thread(
-            target=auto_check_loop, args=(interval, alert_config), daemon=True
-        )
-        auto_check_thread.start()
-        return jsonify({"ok": True, "message": f"自动校验已启动，间隔 {interval} 秒"})
-
-    @app.route("/api/check/auto", methods=["DELETE"])
-    def stop_auto_check():
-        nonlocal auto_check_running
-        auto_check_running = False
-        return jsonify({"ok": True, "message": "自动校验已停止"})
-
-    @app.route("/api/check/auto", methods=["GET"])
-    def auto_check_status():
-        return jsonify({"running": auto_check_running})
-
-    # ===== 数据校验 =====
-
-    @app.route("/api/check", methods=["POST"])
-    def run_check():
-        from .checker import DataChecker
-        data = request.json or {}
-        checker = DataChecker(config, state)
-        try:
-            if "source_db" in data:
-                # 校验指定表
-                result = checker.check_single(
-                    data["source_db"], data["source_table"],
-                    data.get("target_db", config.target.database),
-                    data.get("target_table", data["source_table"])
-                )
-                return jsonify(result)
-            else:
-                # 校验所有表
-                results = checker.check_all()
-                return jsonify(results)
-        finally:
-            checker.close()
-
-    @app.route("/api/check/repair", methods=["POST"])
-    def run_repair():
-        from .checker import DataChecker
-        data = request.json
-        if not data:
-            return jsonify({"error": "需要指定表"}), 400
-        checker = DataChecker(config, state)
-        try:
-            result = checker.auto_repair(
-                data["source_db"], data["source_table"],
-                data.get("target_db", config.target.database),
-                data.get("target_table", data["source_table"])
-            )
-            return jsonify(result)
-        finally:
-            checker.close()
 
     # ===== 健康检查 =====
 
@@ -373,6 +306,7 @@ def create_app(config: AppConfig) -> Flask:
         return jsonify({
             "status": "healthy" if is_running else "stopped",
             "running": is_running,
+            "configured": config.configured,
         })
 
     return app
