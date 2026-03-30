@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MySQL Sync — 跨库同步管理</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.4.4/dist/index.css" />
-    <script src="https://cdn.jsdelivr.net/npm/vue@3.4.0/dist/vue.global.prod.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/element-plus@2.4.4/dist/index.full.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/element-plus/2.4.4/index.min.css" />
+    <script src="https://cdn.bootcdn.net/ajax/libs/vue/3.4.0/vue.global.prod.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/element-plus/2.4.4/index.full.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/axios/1.6.0/axios.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f0f2f5; }
@@ -43,6 +43,7 @@
         .table-item { display: flex; align-items: center; padding: 4px 0 4px 20px; }
         .table-item label { cursor: pointer; }
         .arrow { text-align: center; font-size: 24px; color: #1890ff; padding: 20px 0; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -134,7 +135,7 @@
                             <p style="color:#666;margin:12px 0">勾选需要同步的库和表，同步到目标库 <b>{{ target.database }}</b></p>
 
                             <div v-if="loadingTables" style="text-align:center;padding:40px">
-                                <el-icon class="is-loading" :size="30"><Loading /></el-icon>
+                                <span style="display:inline-block;animation:spin 1s linear infinite;font-size:24px">⟳</span>
                                 <p>正在探测源库表...</p>
                             </div>
 
@@ -205,7 +206,7 @@
                             <p style="color:#666;margin:12px 0">检查环境是否满足同步要求</p>
 
                             <div v-if="checking" style="text-align:center;padding:40px">
-                                <el-icon class="is-loading" :size="30"><Loading /></el-icon>
+                                <span style="display:inline-block;animation:spin 1s linear infinite;font-size:24px">⟳</span>
                                 <p>正在检查...</p>
                             </div>
 
@@ -467,7 +468,6 @@
                 const sysConfig = ref({ server_id: 100, web_port: 8520 });
                 const alertConfig = ref({ webhook_url: '', delay_threshold: 60, error_rate_threshold: 10 });
                 const checkResults = ref([]);
-                const checking = ref(false);
 
                 // 计算属性
                 const canNext = computed(() => {
