@@ -19,8 +19,8 @@ sync_thread = None
 def create_app(config: AppConfig) -> Flask:
     app = Flask(
         __name__,
-        template_folder="../../templates",
-        static_folder="../../static"
+        template_folder="../templates",
+        static_folder="../static"
     )
     state = SyncState(config.state_db)
 
